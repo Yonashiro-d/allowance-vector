@@ -13,30 +13,28 @@
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 1. 環境設定
+# MAGIC ## 0. ライブラリのインストール
+
+# COMMAND ----------
+
+# MAGIC %pip install -U -qqqq pypdf sentence-transformers
+
+# COMMAND ----------
+
+dbutils.library.restartPython()
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 1. 環境設定とインポート
 
 # COMMAND ----------
 
 import sys
 from pathlib import Path
-
-# Repos内のパス設定（簡潔版）
-try:
-    notebook_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebookPath().get()
-    if "Repos" in notebook_path:
-        parts = notebook_path.split("/")
-        repos_idx = parts.index("Repos")
-        repo_root = Path("/Workspace/Repos") / parts[repos_idx + 1] / parts[repos_idx + 2]
-        if str(repo_root) not in sys.path:
-            sys.path.insert(0, str(repo_root))
-except Exception:
-    pass
-
-# COMMAND ----------
-
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, expr
 import re
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import expr
 from pypdf import PdfReader
 from sentence_transformers import SentenceTransformer
 
@@ -53,6 +51,10 @@ workspace_url = SparkSession.getActiveSession().conf.get(
     "spark.databricks.workspaceUrl", None
 )
 
+print(f"Catalog: {CATALOG}")
+print(f"Schema: {SCHEMA}")
+print(f"Table: {DELTA_TABLE_NAME}")
+
 # COMMAND ----------
 
 # MAGIC %md
@@ -62,22 +64,27 @@ workspace_url = SparkSession.getActiveSession().conf.get(
 
 def get_pdf_path(data_path: str = None) -> str:
     """
-    PDFファイルのパスを取得する関数（自動検出）
+    PDFファイルのパスを取得する関数
     
     Args:
-        data_path: データディレクトリのパス（指定しない場合は自動検出）
+        data_path: データディレクトリのパス（指定しない場合はRepos配下のDataフォルダを自動検出）
     
     Returns:
         PDFファイルのパス
     """
-    # パスが指定されていない場合は自動検出
+    # パスが指定されていない場合はRepos配下から自動検出
     if data_path is None:
         notebook_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebookPath().get()
         if "Repos" not in notebook_path:
-            raise ValueError("Notebook must be run from Repos")
+            raise ValueError(
+                "Notebook must be run from Repos. "
+                "Please specify data_path explicitly or run from Repos."
+            )
+        # Repos配下のパスを構築: /Workspace/Repos/{user}/{repo_name}/Data
         parts = notebook_path.split("/")
         repos_idx = parts.index("Repos")
         data_path = f"/Workspace/Repos/{parts[repos_idx + 1]}/{parts[repos_idx + 2]}/Data"
+        print(f"Auto-detected data_path from Repos: {data_path}")
     
     # PDFファイルを検索
     pdf_files = [f for f in dbutils.fs.ls(data_path) if f.name.lower().endswith('.pdf')]
@@ -98,9 +105,11 @@ def get_pdf_path(data_path: str = None) -> str:
     
     return pdf_files[0].path
 
-# PDFパスを取得（自動検出）
+# PDFパスを取得
+# 明示的に指定する場合: pdf_path = get_pdf_path(data_path="/path/to/Data")
+# Repos配下から自動検出する場合: pdf_path = get_pdf_path()
 pdf_path = get_pdf_path()
-print(f"PDF: {pdf_path}")
+print(f"PDF path: {pdf_path}")
 
 # COMMAND ----------
 
@@ -114,7 +123,8 @@ with open(pdf_path, "rb") as f:
     raw_text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
 
 print(f"Extracted text length: {len(raw_text)} characters")
-print(f"First 500 characters:\n{raw_text[:500]}...")
+print(f"Number of pages: {len(reader.pages)}")
+print(f"\nFirst 500 characters:\n{raw_text[:500]}...")
 
 # COMMAND ----------
 
@@ -200,7 +210,8 @@ def chunk_text(text: str) -> list:
 chunked_texts = chunk_text(raw_text)
 print(f"Total chunks created: {len(chunked_texts)}")
 print(f"\nFirst chunk (first 300 chars):\n{chunked_texts[0][:300]}...")
-print(f"\nLast chunk (first 300 chars):\n{chunked_texts[-1][:300]}...")
+if len(chunked_texts) > 1:
+    print(f"\nLast chunk (first 300 chars):\n{chunked_texts[-1][:300]}...")
 
 # COMMAND ----------
 
@@ -232,7 +243,8 @@ print(f"Prepared {len(pdf_texts)} chunks for embedding")
 # - "cl-nagoya/ruri-base-v2" (768次元)
 # - "/Workspace/Users/.../ruri-base-v2" (ローカルモデル)
 model = SentenceTransformer("cl-nagoya/ruri-v3-310m")
-print(f"Loaded embedding model: {model.get_sentence_embedding_dimension()} dimensions")
+embedding_dimension = model.get_sentence_embedding_dimension()
+print(f"Loaded embedding model: {embedding_dimension} dimensions")
 
 # COMMAND ----------
 
@@ -319,4 +331,3 @@ if workspace_url:
 # MAGIC **次のステップ:**
 # MAGIC - Vector Searchインデックスの作成
 # MAGIC - RAGチャットアプリの構築
-
