@@ -1,0 +1,185 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# Obsidian (optional - uncomment if you don't want to share Obsidian settings)
+# Obsidian
+.obsidian/
+.obsidian/**/*
+
+# Databricks
+.databricks/
+.databrickscfg
+.databricks/connect/
+*.dbconnect
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+*.env
+
+# Logs
+*.log
+logs/
+*.log.*
+*.out
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+.pytest_cache/
+
+# Testing
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# Config (sensitive)
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+*.bak
+*.backup
+*.old
+*.orig
+
+# Databricks workspace files
+workspace/
+*.dbc
+*.dbconnect
+
+# Model files (large)
+models/
+*.pkl
+*.pickle
+*.h5
+*.hdf5
+*.ckpt
+*.pb
+*.onnx
+
+# Vector data (large)
+vectors/
+*.npy
+*.npz
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Compressed files (large)
+*.zip
+*.tar
+*.tar.gz
+*.rar
+*.7z
+
+# Documentation
+docs/
+site/
+
+# MyPy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# PyCharm
+.idea/
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# Local configuration
+local_config.yaml
+local_settings.py
+settings_local.py
+
+# Secrets and credentials
+secrets/
+credentials/
+*.secret
+*.credential
+.secrets/
+
+# Backup files
+backup/
+backups/
+*.backup
+
+# Lock files (optional - include if you want to track them)
+# Pipfile.lock
+# poetry.lock
+# requirements.lock
+
