@@ -8,7 +8,7 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install -U pypdf sentence-transformers databricks-vectorsearch databricks-sdk
+# MAGIC %pip install -U pypdf sentence-transformers sentencepiece databricks-vectorsearch databricks-sdk
 
 # COMMAND ----------
 
@@ -21,7 +21,6 @@ import re
 from pathlib import Path
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import expr
-from pypdf import PdfReader
 from sentence_transformers import SentenceTransformer
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound, PermissionDenied
@@ -151,10 +150,15 @@ print(f"PDF path: {pdf_path}")
 
 # COMMAND ----------
 
-if pdf_path.startswith("/Workspace/"):
-    pdf_path = f"/dbfs{pdf_path}"
+from pypdf import PdfReader
 
-with open(pdf_path, "rb") as f:
+pdf_path_1 = "通勤手当支給規程（2024-04-01）.pdf"
+
+# PDFを読み込んでテキストに変換
+if pdf_path_1.startswith("/Workspace/"):
+    pdf_path_6 = f"/dbfs{pdf_path_1}"
+
+with open(pdf_path_1, "rb") as f:
     reader = PdfReader(f)
     raw_text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
 
