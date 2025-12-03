@@ -177,7 +177,7 @@ def search_similar_chunks(
                 num_results=top_k,
                 filters=filters
             )
-        if hasattr(index, 'query_vector'):
+        if query_result is None and hasattr(index, 'query_vector'):
             query_result = index.query_vector(
                 query_vector=query_vector,
                 columns=["chunk_id", "chunked_text", "file_name"],
@@ -231,7 +231,7 @@ def search_similar_chunks(
                         "file_name": result.get("file_name", ""),
                         "score": result.get("score", result.get("distance", 0.0))
                     })
-                if isinstance(result, list) and len(result) >= 3:
+                if not isinstance(result, dict) and isinstance(result, list) and len(result) >= 3:
                     # [chunk_id, chunked_text, file_name, score] の形式
                     search_results.append({
                         "chunk_id": result[0] if len(result) > 0 else None,
@@ -252,7 +252,7 @@ def search_similar_chunks(
                             "file_name": result.get("file_name", ""),
                             "score": result.get("score", result.get("distance", 0.0))
                         })
-            if hasattr(data, 'data_array'):
+            if not isinstance(data, list) and hasattr(data, 'data_array'):
                 for result in data.data_array:
                     if isinstance(result, dict):
                         search_results.append({
@@ -261,7 +261,7 @@ def search_similar_chunks(
                             "file_name": result.get("file_name", ""),
                             "score": result.get("score", result.get("distance", 0.0))
                         })
-                    if isinstance(result, list) and len(result) >= 3:
+                    if not isinstance(result, dict) and isinstance(result, list) and len(result) >= 3:
                         search_results.append({
                             "chunk_id": result[0] if len(result) > 0 else None,
                             "chunked_text": result[1] if len(result) > 1 else "",
@@ -616,28 +616,6 @@ class RAGModel(mlflow.pyfunc.PythonModel):
                     # 様々な応答形式に対応
                     if hasattr(query_result, 'result') and query_result.result:
                         data = query_result.result
-                        if hasattr(data, 'data_array'):
-                            for result in data.data_array:
-                                if isinstance(result, list) and len(result) >= 3:
-                                    doc = Document(
-                                        page_content=result[1] if len(result) > 1 else "",
-                                        metadata={
-                                            "chunk_id": result[0] if len(result) > 0 else None,
-                                            "file_name": result[2] if len(result) > 2 else "",
-                                            "score": result[3] if len(result) > 3 else 0.0
-                                        }
-                                    )
-                                    documents.append(doc)
-                                if isinstance(result, dict):
-                                    doc = Document(
-                                        page_content=result.get("chunked_text", ""),
-                                        metadata={
-                                            "chunk_id": result.get("chunk_id"),
-                                            "file_name": result.get("file_name", ""),
-                                            "score": result.get("score", 0.0)
-                                        }
-                                    )
-                                    documents.append(doc)
                         if isinstance(data, list):
                             for result in data:
                                 if isinstance(result, dict):
@@ -650,7 +628,29 @@ class RAGModel(mlflow.pyfunc.PythonModel):
                                         }
                                     )
                                     documents.append(doc)
-                    if isinstance(query_result, list):
+                        if not isinstance(data, list) and hasattr(data, 'data_array'):
+                            for result in data.data_array:
+                                if isinstance(result, dict):
+                                    doc = Document(
+                                        page_content=result.get("chunked_text", ""),
+                                        metadata={
+                                            "chunk_id": result.get("chunk_id"),
+                                            "file_name": result.get("file_name", ""),
+                                            "score": result.get("score", 0.0)
+                                        }
+                                    )
+                                    documents.append(doc)
+                                if not isinstance(result, dict) and isinstance(result, list) and len(result) >= 3:
+                                    doc = Document(
+                                        page_content=result[1] if len(result) > 1 else "",
+                                        metadata={
+                                            "chunk_id": result[0] if len(result) > 0 else None,
+                                            "file_name": result[2] if len(result) > 2 else "",
+                                            "score": result[3] if len(result) > 3 else 0.0
+                                        }
+                                    )
+                                    documents.append(doc)
+                    if not hasattr(query_result, 'result') and isinstance(query_result, list):
                         for result in query_result:
                             if isinstance(result, dict):
                                 doc = Document(
