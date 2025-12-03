@@ -73,8 +73,8 @@ print(f"Query Embedding Model: {QUERY_EMBEDDING_MODEL}")
 
 # クエリ用Embeddingモデルを初期化
 query_embeddings = DatabricksEmbeddings(
-    model=QUERY_EMBEDDING_MODEL,
-    endpoint_type="databricks-foundation-model"
+    endpoint=QUERY_EMBEDDING_MODEL,
+    endpoint_type="databricks-model-serving"
 )
 
 # テストクエリでベクトル化を確認
@@ -1005,3 +1005,5 @@ else:
 # MAGIC - プロンプトの最適化
 # MAGIC - 評価メトリクスの追加
 # MAGIC - チャット履歴の管理（オプション）
+
+
