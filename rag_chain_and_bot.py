@@ -11,6 +11,7 @@
 # MAGIC %pip install -U \
 # MAGIC   langchain \
 # MAGIC   langchain-databricks \
+# MAGIC   databricks-langchain \
 # MAGIC   langchain-community \
 # MAGIC   databricks-vectorsearch \
 # MAGIC   databricks-sdk \
@@ -31,7 +32,7 @@ from pyspark.sql import SparkSession
 from databricks.sdk import WorkspaceClient
 from databricks.vector_search.client import VectorSearchClient
 from langchain_community.embeddings import DatabricksEmbeddings
-from langchain_community.llms import Databricks
+from databricks_langchain import ChatDatabricks
 from langchain.chains import RetrievalQA
 from langchain.prompts import PromptTemplate
 from langchain_community.vectorstores import DatabricksVectorSearch
@@ -431,9 +432,10 @@ except Exception as e:
 
 # Databricks Foundation ModelをLLMとして使用
 # デフォルトはdatabricks-dbrx-instructを使用
-llm = Databricks(
-    endpoint="databricks-dbrx-instruct",
-    model_kwargs={"temperature": 0.1, "max_tokens": 500}
+llm = ChatDatabricks(
+    endpoint_name="databricks-dbrx-instruct",
+    temperature=0.1,
+    max_tokens=500
 )
 
 print("LLM initialized")
@@ -608,7 +610,7 @@ class RAGModel(mlflow.pyfunc.PythonModel):
         """モデルのコンテキストをロード"""
         import os
         from langchain_community.embeddings import DatabricksEmbeddings
-        from langchain_community.llms import Databricks
+        from databricks_langchain import ChatDatabricks
         from langchain.chains import RetrievalQA
         from langchain.prompts import PromptTemplate
         from langchain_community.vectorstores import DatabricksVectorSearch
@@ -664,9 +666,10 @@ class RAGModel(mlflow.pyfunc.PythonModel):
             vector_store = None
         
         # LLMを初期化
-        llm = Databricks(
-            endpoint="databricks-dbrx-instruct",
-            model_kwargs={"temperature": 0.1, "max_tokens": 500}
+        llm = ChatDatabricks(
+            endpoint_name="databricks-dbrx-instruct",
+            temperature=0.1,
+            max_tokens=500
         )
         
         # プロンプトテンプレート
