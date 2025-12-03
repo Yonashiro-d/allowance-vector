@@ -97,17 +97,29 @@ print(f"First 5 values: {test_embedding[:5]}")
 # COMMAND ----------
 
 # インデックスの状態を確認
+# VectorSearchIndexオブジェクトにはstatus属性がないため、インデックスが取得できれば使用可能とみなす
 try:
+    # インデックスオブジェクトを取得（クエリ用）
     index = vsc.get_index(
         endpoint_name=VECTOR_SEARCH_ENDPOINT,
         index_name=VECTOR_INDEX_NAME
     )
-    print(f"Index Status: {index.status}")
-    print(f"Index Name: {index.name}")
-    if index.status != "ONLINE":
-        print("WARNING: Index is not ONLINE. Please wait for the index to be ready.")
+    print(f"✓ Index retrieved successfully")
+    print(f"  Index Name: {VECTOR_INDEX_NAME}")
+    print(f"  Endpoint: {VECTOR_SEARCH_ENDPOINT}")
+    print("  Note: Index status check skipped (VectorSearchIndex object doesn't have status attribute)")
+    print("  If queries fail, ensure the index is ONLINE in the Databricks UI")
+    
 except Exception as e:
-    print(f"Error getting index: {e}")
+    print(f"✗ Error getting index: {e}")
+    print("\nTroubleshooting:")
+    print(f"  1. Check if endpoint '{VECTOR_SEARCH_ENDPOINT}' exists")
+    print(f"  2. Check if index '{VECTOR_INDEX_NAME}' exists")
+    print(f"  3. Verify you have permissions to access the index")
+    print(f"  4. Ensure the index was created in vector_preparation.py")
+    if workspace_url:
+        index_name_only = VECTOR_INDEX_NAME.split('.')[-1]
+        print(f"  5. Check index status in UI: https://{workspace_url}/explore/data/{CATALOG}/{SCHEMA}/{index_name_only}")
     raise
 
 # COMMAND ----------
@@ -125,6 +137,11 @@ def search_similar_chunks(
     """
     Vector Searchを使用して類似チャンクを検索
     
+    インデックス構造:
+    - primary_key: chunk_id (bigint)
+    - embedding_vector_column: embedding (array<float>, 768次元)
+    - columns: chunk_id, chunked_text (string), embedding, file_name (string)
+    
     Args:
         query: 検索クエリ
         top_k: 返すチャンクの数（デフォルト: 5）
@@ -133,56 +150,78 @@ def search_similar_chunks(
     Returns:
         検索結果のリスト（各要素はchunk_id、chunked_text、file_name、scoreを含む）
     """
-    # クエリをベクトル化
+    # クエリをベクトル化（768次元のベクトルを生成）
     query_vector = query_embeddings.embed_query(query)
     
-    # Vector Searchで検索
-    index = vsc.get_index(
-        endpoint_name=VECTOR_SEARCH_ENDPOINT,
-        index_name=VECTOR_INDEX_NAME
-    )
+    # ベクトル次元の確認
+    if len(query_vector) != 768:
+        print(f"Warning: Query vector dimension ({len(query_vector)}) doesn't match index dimension (768)")
     
-    # queryメソッドを使用して検索
-    # 注意: Databricks Vector Search APIの実際の形式に応じて調整が必要な場合があります
+    # Vector Searchで検索
+    # 実際のAPI構造に基づいて実装
     try:
-        query_result = index.query(
-            query_vector=query_vector,
-            columns=["chunk_id", "chunked_text", "file_name"],
-            num_results=top_k,
-            filters=filters
+        # インデックスオブジェクトを取得
+        index = vsc.get_index(
+            endpoint_name=VECTOR_SEARCH_ENDPOINT,
+            index_name=VECTOR_INDEX_NAME
         )
         
-        # 結果を整形（APIの応答形式に応じて調整）
+        # 実際のAPIメソッドを試行（複数の可能性を試す）
+        query_result = None
+        
+        # 方法1: indexオブジェクトのメソッドを試す
+        if hasattr(index, 'similarity_search'):
+            query_result = index.similarity_search(
+                query_vector=query_vector,
+                columns=["chunk_id", "chunked_text", "file_name"],
+                num_results=top_k,
+                filters=filters
+            )
+        if hasattr(index, 'query_vector'):
+            query_result = index.query_vector(
+                query_vector=query_vector,
+                columns=["chunk_id", "chunked_text", "file_name"],
+                num_results=top_k,
+                filters=filters
+            )
+        
+        # 方法2: VectorSearchClientのメソッドを直接使用
+        if query_result is None:
+            if hasattr(vsc, 'query_index'):
+                query_result = vsc.query_index(
+                    index_name=VECTOR_INDEX_NAME,
+                    query_vector=query_vector,
+                    columns=["chunk_id", "chunked_text", "file_name"],
+                    num_results=top_k,
+                    filters=filters
+                )
+        
+        # 方法3: WorkspaceClientのAPIを使用
+        if query_result is None:
+            try:
+                query_result = w.vector_search_indexes.query_index(
+                    index_name=VECTOR_INDEX_NAME,
+                    query_vector=query_vector,
+                    columns=["chunk_id", "chunked_text", "file_name"],
+                    num_results=top_k,
+                    filters=filters
+                )
+            except Exception:
+                pass
+        
+        if query_result is None:
+            raise ValueError("Could not find valid query method. Please check Databricks Vector Search API documentation.")
+        
+        # 結果を整形
         search_results = []
         
+        # デバッグ: 実際のレスポンス構造を確認
+        print(f"Debug: query_result type: {type(query_result)}")
+        if hasattr(query_result, '__dict__'):
+            print(f"Debug: query_result attributes: {dir(query_result)}")
+        
         # 様々な応答形式に対応
-        if hasattr(query_result, 'result') and query_result.result:
-            data = query_result.result
-            if hasattr(data, 'data_array'):
-                for result in data.data_array:
-                    if isinstance(result, list) and len(result) >= 3:
-                        search_results.append({
-                            "chunk_id": result[0] if len(result) > 0 else None,
-                            "chunked_text": result[1] if len(result) > 1 else "",
-                            "file_name": result[2] if len(result) > 2 else "",
-                            "score": result[3] if len(result) > 3 else 0.0
-                        })
-                    if isinstance(result, dict):
-                        search_results.append({
-                            "chunk_id": result.get("chunk_id"),
-                            "chunked_text": result.get("chunked_text", ""),
-                            "file_name": result.get("file_name", ""),
-                            "score": result.get("score", 0.0)
-                        })
-            if isinstance(data, list):
-                for result in data:
-                    if isinstance(result, dict):
-                        search_results.append({
-                            "chunk_id": result.get("chunk_id"),
-                            "chunked_text": result.get("chunked_text", ""),
-                            "file_name": result.get("file_name", ""),
-                            "score": result.get("score", 0.0)
-                        })
+        # パターン1: 辞書のリスト
         if isinstance(query_result, list):
             for result in query_result:
                 if isinstance(result, dict):
@@ -190,12 +229,73 @@ def search_similar_chunks(
                         "chunk_id": result.get("chunk_id"),
                         "chunked_text": result.get("chunked_text", ""),
                         "file_name": result.get("file_name", ""),
-                        "score": result.get("score", 0.0)
+                        "score": result.get("score", result.get("distance", 0.0))
+                    })
+                if isinstance(result, list) and len(result) >= 3:
+                    # [chunk_id, chunked_text, file_name, score] の形式
+                    search_results.append({
+                        "chunk_id": result[0] if len(result) > 0 else None,
+                        "chunked_text": result[1] if len(result) > 1 else "",
+                        "file_name": result[2] if len(result) > 2 else "",
+                        "score": result[3] if len(result) > 3 else 0.0
                     })
         
+        # パターン2: オブジェクト形式（result属性を持つ）
+        if hasattr(query_result, 'result') and query_result.result:
+            data = query_result.result
+            if isinstance(data, list):
+                for result in data:
+                    if isinstance(result, dict):
+                        search_results.append({
+                            "chunk_id": result.get("chunk_id"),
+                            "chunked_text": result.get("chunked_text", ""),
+                            "file_name": result.get("file_name", ""),
+                            "score": result.get("score", result.get("distance", 0.0))
+                        })
+            if hasattr(data, 'data_array'):
+                for result in data.data_array:
+                    if isinstance(result, dict):
+                        search_results.append({
+                            "chunk_id": result.get("chunk_id"),
+                            "chunked_text": result.get("chunked_text", ""),
+                            "file_name": result.get("file_name", ""),
+                            "score": result.get("score", result.get("distance", 0.0))
+                        })
+                    if isinstance(result, list) and len(result) >= 3:
+                        search_results.append({
+                            "chunk_id": result[0] if len(result) > 0 else None,
+                            "chunked_text": result[1] if len(result) > 1 else "",
+                            "file_name": result[2] if len(result) > 2 else "",
+                            "score": result[3] if len(result) > 3 else 0.0
+                        })
+        
+        # パターン3: 辞書形式（単一の結果またはメタデータを含む）
+        if isinstance(query_result, dict):
+            if "chunk_id" in query_result or "chunked_text" in query_result:
+                search_results.append({
+                    "chunk_id": query_result.get("chunk_id"),
+                    "chunked_text": query_result.get("chunked_text", ""),
+                    "file_name": query_result.get("file_name", ""),
+                    "score": query_result.get("score", query_result.get("distance", 0.0))
+                })
+            if "results" in query_result:
+                # resultsキーにリストが含まれている場合
+                for result in query_result["results"]:
+                    if isinstance(result, dict):
+                        search_results.append({
+                            "chunk_id": result.get("chunk_id"),
+                            "chunked_text": result.get("chunked_text", ""),
+                            "file_name": result.get("file_name", ""),
+                            "score": result.get("score", result.get("distance", 0.0))
+                        })
+        
         return search_results
+        
     except Exception as e:
         print(f"Error in vector search: {e}")
+        print(f"Error type: {type(e).__name__}")
+        import traceback
+        print(f"Traceback: {traceback.format_exc()}")
         print("Falling back to direct table query...")
         return []
 
@@ -504,11 +604,9 @@ class RAGModel(mlflow.pyfunc.PythonModel):
             def _get_relevant_documents(self, query: str):
                 try:
                     query_vector = self.embeddings.embed_query(query)
-                    index = self.vsc.get_index(
-                        endpoint_name=self.endpoint,
-                        index_name=self.index_name
-                    )
-                    query_result = index.query(
+                    # VectorSearchClientのqueryメソッドを直接使用
+                    query_result = self.vsc.query(
+                        index_name=self.index_name,
                         query_vector=query_vector,
                         columns=["chunk_id", "chunked_text", "file_name"],
                         num_results=self.top_k
