@@ -18,7 +18,8 @@
 # MAGIC   mlflow \
 # MAGIC   requests \
 # MAGIC   pandas \
-# MAGIC   pydantic
+# MAGIC   pydantic \
+# MAGIC   sentence-transformers
 
 # COMMAND ----------
 
@@ -31,12 +32,11 @@ from typing import List, Dict, Any, Optional, Union
 from pyspark.sql import SparkSession
 from databricks.sdk import WorkspaceClient
 from databricks.vector_search.client import VectorSearchClient
-from langchain_community.embeddings import DatabricksEmbeddings
 from databricks_langchain import ChatDatabricks
 from langchain.chains import RetrievalQA
 from langchain.prompts import PromptTemplate
-from langchain_community.vectorstores import DatabricksVectorSearch
 from langchain.schema import BaseRetriever, Document
+from sentence_transformers import SentenceTransformer
 import mlflow
 import mlflow.pyfunc
 from pydantic import BaseModel, Field, field_validator
@@ -53,7 +53,9 @@ SCHEMA = "allowance_payment_rules"
 DELTA_TABLE_NAME = f"{CATALOG}.{SCHEMA}.commuting_allowance_vectors"
 VECTOR_SEARCH_ENDPOINT = "databricks-bge-large-en-endpoint"
 VECTOR_INDEX_NAME = f"{CATALOG}.{SCHEMA}.commuting_allowance_index"
-QUERY_EMBEDDING_MODEL = "databricks-gte-large-en"
+# 768次元のEmbeddingモデルを使用（インデックスと同じ次元）
+# インデックスは cl-nagoya/ruri-v3-310m (768次元) で作成されているため、同じモデルを使用
+QUERY_EMBEDDING_MODEL = "cl-nagoya/ruri-v3-310m"
 
 print(f"Catalog: {CATALOG}")
 print(f"Schema: {SCHEMA}")
@@ -290,10 +292,27 @@ def parse_vector_search_response(query_result: Any) -> List[VectorSearchResult]:
 # COMMAND ----------
 
 # クエリ用Embeddingモデルを初期化
-query_embeddings = DatabricksEmbeddings(
-    endpoint=QUERY_EMBEDDING_MODEL,
-    endpoint_type="databricks-model-serving"
-)
+# 768次元のモデルを使用（SentenceTransformerを使用）
+query_embedding_model = SentenceTransformer(QUERY_EMBEDDING_MODEL)
+print(f"Query Embedding Model: {QUERY_EMBEDDING_MODEL}")
+print(f"Embedding Dimension: {query_embedding_model.get_sentence_embedding_dimension()}")
+
+# LangChain用のラッパーを作成
+class SentenceTransformerEmbeddings:
+    """SentenceTransformerをLangChainのEmbeddingsインターフェースに適合させる"""
+    def __init__(self, model):
+        self.model = model
+    
+    def embed_query(self, text: str) -> List[float]:
+        """クエリテキストをベクトル化"""
+        return self.model.encode(text, show_progress_bar=False).tolist()
+    
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        """複数のテキストをベクトル化"""
+        embeddings = self.model.encode(texts, show_progress_bar=False)
+        return embeddings.tolist()
+
+query_embeddings = SentenceTransformerEmbeddings(query_embedding_model)
 
 # COMMAND ----------
 
@@ -356,28 +375,54 @@ def search_similar_chunks(
     Returns:
         VectorSearchResultのリスト（統一形式）
     """
-    # クエリをベクトル化（768次元のベクトルを生成）
+    # クエリをベクトル化
     query_vector = query_embeddings.embed_query(query)
     
-    # ベクトル次元の確認
-    if len(query_vector) != 768:
-        print(f"Warning: Query vector dimension ({len(query_vector)}) doesn't match index dimension (768)")
-    
-    # Vector Searchで検索（vsc.query()のみを使用）
+    # Vector Searchで検索
     try:
-        # フィルタ条件をJSON文字列に変換（指定されている場合）
-        filters_json = None
-        if filters:
-            import json
-            filters_json = json.dumps(filters)
+        # インデックスオブジェクトを取得
+        index = vsc.get_index(
+            endpoint_name=VECTOR_SEARCH_ENDPOINT,
+            index_name=VECTOR_INDEX_NAME
+        )
         
-        # vsc.query()を使用して検索
-        query_result = vsc.query(
-            index_name=VECTOR_INDEX_NAME,
+        # インデックスの次元を確認（可能な場合）
+        index_dimension = None
+        if hasattr(index, 'embedding_dimension'):
+            index_dimension = index.embedding_dimension
+        elif hasattr(index, 'primary_key') and hasattr(index, 'embedding_vector_column'):
+            # テーブルから次元を取得
+            try:
+                sample_df = spark.sql(f"SELECT embedding FROM {DELTA_TABLE_NAME} LIMIT 1")
+                if sample_df.count() > 0:
+                    sample_embedding = sample_df.collect()[0]['embedding']
+                    index_dimension = len(sample_embedding) if sample_embedding else None
+            except:
+                pass
+        
+        # ベクトル次元の確認
+        if index_dimension and len(query_vector) != index_dimension:
+            print(f"Warning: Query vector dimension ({len(query_vector)}) doesn't match index dimension ({index_dimension})")
+            print(f"Note: Using query vector as-is. Results may be inaccurate.")
+        
+        # フィルタ条件を文字列形式に変換（SQL WHERE句形式）
+        filters_str = None
+        if filters:
+            # 辞書形式のフィルタをSQL WHERE句形式の文字列に変換
+            filter_parts = []
+            for key, value in filters.items():
+                if isinstance(value, str):
+                    filter_parts.append(f"{key} = '{value}'")
+                else:
+                    filter_parts.append(f"{key} = {value}")
+            filters_str = " AND ".join(filter_parts)
+        
+        # インデックスオブジェクトのsimilarity_searchメソッドを使用（ドキュメントに基づく）
+        query_result = index.similarity_search(
             query_vector=query_vector,
-            num_results=top_k,
             columns=["chunk_id", "chunked_text", "file_name"],
-            filters_json=filters_json
+            num_results=top_k,
+            filters=filters_str
         )
         
         # 結果を解析（辞書形式のみに対応）
@@ -407,19 +452,16 @@ def search_similar_chunks(
 # COMMAND ----------
 
 # Databricks Vector SearchをVector Storeとして設定
-# 注意: DatabricksVectorSearchの実際のAPIに応じて調整が必要な場合があります
+# databricks-langchainパッケージのDatabricksVectorSearchを使用（ドキュメントに基づく）
 try:
+    from databricks_langchain import DatabricksVectorSearch
+    
     vector_store = DatabricksVectorSearch(
-        index=DatabricksVectorSearch.Index(
-            endpoint_name=VECTOR_SEARCH_ENDPOINT,
-            index_name=VECTOR_INDEX_NAME
-        ),
-        embedding=query_embeddings,
-        text_column="chunked_text"
+        index_name=VECTOR_INDEX_NAME
     )
-    print("Vector Store initialized")
+    print("Vector Store initialized with databricks-langchain")
 except Exception as e:
-    print(f"Warning: Could not initialize DatabricksVectorSearch: {e}")
+    print(f"Warning: Could not initialize DatabricksVectorSearch from databricks-langchain: {e}")
     print("Using custom retriever instead")
     vector_store = None
 
@@ -609,11 +651,9 @@ class RAGModel(mlflow.pyfunc.PythonModel):
     def load_context(self, context):
         """モデルのコンテキストをロード"""
         import os
-        from langchain_community.embeddings import DatabricksEmbeddings
         from databricks_langchain import ChatDatabricks
         from langchain.chains import RetrievalQA
         from langchain.prompts import PromptTemplate
-        from langchain_community.vectorstores import DatabricksVectorSearch
         
         # 設定を環境変数から取得
         catalog = os.environ.get("CATALOG", "hhhd_demo_itec")
@@ -645,21 +685,27 @@ class RAGModel(mlflow.pyfunc.PythonModel):
                     return ""
                 return str(v)
         
-        # Embeddingモデルを初期化
-        self.query_embeddings = DatabricksEmbeddings(
-            endpoint=query_embedding_model,
-            endpoint_type="databricks-model-serving"
-        )
+        # Embeddingモデルを初期化（768次元のSentenceTransformerを使用）
+        self.query_embedding_model = SentenceTransformer(query_embedding_model)
+        
+        # LangChain用のラッパー
+        class SentenceTransformerEmbeddings:
+            def __init__(self, model):
+                self.model = model
+            def embed_query(self, text: str):
+                return self.model.encode(text, show_progress_bar=False).tolist()
+            def embed_documents(self, texts: List[str]):
+                embeddings = self.model.encode(texts, show_progress_bar=False)
+                return embeddings.tolist()
+        
+        self.query_embeddings = SentenceTransformerEmbeddings(self.query_embedding_model)
         
         # Vector Storeを設定（エラーハンドリング付き）
         try:
+            from databricks_langchain import DatabricksVectorSearch
+            
             vector_store = DatabricksVectorSearch(
-                index=DatabricksVectorSearch.Index(
-                    endpoint_name=vector_search_endpoint,
-                    index_name=vector_index_name
-                ),
-                embedding=self.query_embeddings,
-                text_column="chunked_text"
+                index_name=vector_index_name
             )
         except Exception as e:
             print(f"Warning: Could not initialize DatabricksVectorSearch: {e}")
@@ -704,9 +750,15 @@ class RAGModel(mlflow.pyfunc.PythonModel):
             def _get_relevant_documents(self, query: str):
                 try:
                     query_vector = self.embeddings.embed_query(query)
-                    # VectorSearchClientのqueryメソッドを直接使用
-                    query_result = self.vsc.query(
-                        index_name=self.index_name,
+                    
+                    # インデックスオブジェクトを取得
+                    index = self.vsc.get_index(
+                        endpoint_name=self.endpoint,
+                        index_name=self.index_name
+                    )
+                    
+                    # インデックスオブジェクトのsimilarity_searchメソッドを使用（ドキュメントに基づく）
+                    query_result = index.similarity_search(
                         query_vector=query_vector,
                         columns=["chunk_id", "chunked_text", "file_name"],
                         num_results=self.top_k
