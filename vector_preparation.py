@@ -35,8 +35,8 @@ vsc = VectorSearchClient(disable_notice=True)
 workspace_url = SparkSession.getActiveSession().conf.get("spark.databricks.workspaceUrl", None)
 
 # 設定
-CATALOG = "main"
-SCHEMA = "rag_pipeline"
+CATALOG = "hhhd_demo_itec"
+SCHEMA = "allowance_payment_rules"
 DELTA_TABLE_NAME = f"{CATALOG}.{SCHEMA}.commuting_allowance_vectors"
 VECTOR_SEARCH_ENDPOINT = "databricks-bge-large-en-endpoint"
 VECTOR_INDEX_NAME = f"{CATALOG}.{SCHEMA}.commuting_allowance_index"
@@ -99,15 +99,31 @@ print(f"PASS: Vector Search endpoint `{VECTOR_SEARCH_ENDPOINT}` exists")
 
 # COMMAND ----------
 
-def get_pdf_path(data_path: str = None) -> str:
-    """Repos配下のDataフォルダからPDFファイルを自動検出"""
+def get_pdf_path(data_path: str = None, pdf_path: str = None) -> str:
+    """PDFファイルのパスを取得
+    
+    Args:
+        data_path: データディレクトリのパス（指定しない場合はRepos配下のルートを自動検出）
+        pdf_path: PDFファイルのフルパス（指定された場合はそのまま返す）
+    
+    Returns:
+        PDFファイルのパス
+    """
+    # フルパスが指定されている場合はそのまま返す
+    if pdf_path:
+        if not pdf_path.lower().endswith('.pdf'):
+            raise ValueError(f"Specified path is not a PDF file: {pdf_path}")
+        print(f"Using specified PDF path: {pdf_path}")
+        return pdf_path
+    
+    # パスが指定されていない場合はRepos配下のルートから自動検出
     if data_path is None:
         notebook_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebookPath().get()
         if "Repos" not in notebook_path:
-            raise ValueError("Notebook must be run from Repos. Please specify data_path explicitly.")
+            raise ValueError("Notebook must be run from Repos. Please specify data_path or pdf_path explicitly.")
         parts = notebook_path.split("/")
         repos_idx = parts.index("Repos")
-        data_path = f"/Workspace/Repos/{parts[repos_idx + 1]}/{parts[repos_idx + 2]}/Data"
+        data_path = f"/Workspace/Repos/{parts[repos_idx + 1]}/{parts[repos_idx + 2]}"
         print(f"Auto-detected data_path: {data_path}")
     
     pdf_files = [f for f in dbutils.fs.ls(data_path) if f.name.lower().endswith('.pdf')]
@@ -126,7 +142,11 @@ def get_pdf_path(data_path: str = None) -> str:
     
     return pdf_files[0].path
 
-pdf_path = get_pdf_path()
+# フルパスを直接指定する場合
+pdf_path = get_pdf_path(pdf_path="/Workspace/Users/toshimitsu-yu@itec.hankyu-hanshin.co.jp/allowance-vector/通勤手当支給規程（2024-04-01）.pdf")
+# または自動検出する場合
+# pdf_path = get_pdf_path()
+
 print(f"PDF path: {pdf_path}")
 
 # COMMAND ----------
