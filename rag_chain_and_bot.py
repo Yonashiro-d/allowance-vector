@@ -146,29 +146,42 @@ with mlflow.start_run():
     
     import sys
     import os
+    import tempfile
+    import shutil
     
-    notebook_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebookPath().get()
+    temp_dir = tempfile.mkdtemp()
     
-    if "Repos" not in notebook_path:
-        raise ValueError("Notebook must be run from Repos")
-    
-    parts = notebook_path.split("/")
-    repos_idx = parts.index("Repos")
-    repo_root = f"/Workspace/Repos/{parts[repos_idx + 1]}/{parts[repos_idx + 2]}"
-    
-    code_paths = [
-        f"{repo_root}/rag_config.py",
-        f"{repo_root}/rag_client.py"
-    ]
-    
-    files = dbutils.fs.ls(repo_root)
-    file_names = [f.name.rstrip('/') for f in files]
-    for code_path in code_paths:
-        file_name = os.path.basename(code_path)
-        if file_name not in file_names:
-            raise FileNotFoundError(f"File not found: {code_path}. Available files: {file_names}")
-    
-    print(f"Using code_paths: {code_paths}")
+    try:
+        import importlib.util
+        
+        for module_name in ["rag_config", "rag_client"]:
+            try:
+                module = __import__(module_name)
+                module_file = module.__file__
+                
+                if module_file:
+                    if module_file.endswith('.pyc'):
+                        module_file = module_file[:-1]
+                    
+                    temp_file = os.path.join(temp_dir, f"{module_name}.py")
+                    shutil.copy2(module_file, temp_file)
+                    print(f"Copied {module_file} to {temp_file}")
+            except Exception as e:
+                print(f"Warning: Could not copy {module_name}: {e}")
+        
+        code_paths = [
+            os.path.join(temp_dir, "rag_config.py"),
+            os.path.join(temp_dir, "rag_client.py")
+        ]
+        
+        for code_path in code_paths:
+            if not os.path.exists(code_path):
+                raise FileNotFoundError(f"File not found: {code_path}")
+        
+        print(f"Using code_paths: {code_paths}")
+    except Exception as e:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        raise
     
     conda_env = {
         "channels": ["defaults", "conda-forge"],
