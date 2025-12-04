@@ -1,13 +1,8 @@
-"""
-RAG設定管理モジュール
-"""
 from typing import Optional
 import os
 
 
 class RAGConfig:
-    """RAG設定を一元管理するクラス"""
-    
     def __init__(
         self,
         catalog: Optional[str] = None,
@@ -36,7 +31,6 @@ class RAGConfig:
         )
     
     def to_dict(self) -> dict:
-        """設定を辞書形式で返す"""
         return {
             "CATALOG": self.catalog,
             "SCHEMA": self.schema,

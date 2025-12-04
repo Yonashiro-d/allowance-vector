@@ -47,7 +47,6 @@ rag_client._initialize()
 # COMMAND ----------
 
 def query_rag(question: str) -> Dict[str, Any]:
-    """RAGクエリ関数（後方互換性のため保持）"""
     return rag_client.query(question)
 
 # COMMAND ----------
@@ -60,16 +59,12 @@ class RAGModel(mlflow.pyfunc.PythonModel):
     
     def load_context(self, context):
         import traceback
-        
         try:
             from rag_config import RAGConfig
             from rag_client import RAGClient
-            
             config = RAGConfig()
             self.rag_client = RAGClient(config)
             self.rag_client._initialize()
-            
-            print("Context loaded successfully")
         except Exception as e:
             error_msg = f"Error loading context: {str(e)}\n{traceback.format_exc()}"
             print(error_msg)
@@ -141,17 +136,11 @@ except Exception:
 mlflow.set_experiment(experiment_name)
 
 with mlflow.start_run():
-    from mlflow.models import ModelSignature
-    from mlflow.types import DataType, Schema, ColSpec
-    
-    signature = None
-    
     input_example = {
         "messages": [
             {"role": "user", "content": "通勤手当はいくらまで支給されますか？"}
         ]
     }
-    sample_output = query_rag(input_example["messages"][0]["content"])
     
     env_vars = config.to_dict()
     
@@ -181,16 +170,17 @@ with mlflow.start_run():
     mlflow.pyfunc.log_model(
         artifact_path="rag_model",
         python_model=RAGModel(),
-        signature=signature,
+        signature=None,
         input_example=input_example,
         conda_env=conda_env,
         registered_model_name="commuting_allowance_rag_model"
     )
     
     mlflow.log_params(env_vars)
-    mlflow.log_metric("num_sources", sample_output.get("num_sources", 0))
+    mlflow.set_tag("task", "llm/v1/chat")
     mlflow.set_tag("embedding_model", config.query_embedding_model)
     mlflow.set_tag("llm", config.llm_endpoint)
+    mlflow.set_tag("model_type", "chat_completion")
     
     print(f"Model logged: {mlflow.active_run().info.run_id}")
 

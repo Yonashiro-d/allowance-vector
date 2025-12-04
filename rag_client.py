@@ -1,7 +1,3 @@
-"""
-RAGクライアントAPI
-会話履歴対応のRAGクエリ機能を提供
-"""
 from typing import Dict, Any, List, Optional
 from databricks_langchain import ChatDatabricks, DatabricksVectorSearch
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -9,8 +5,6 @@ from rag_config import RAGConfig
 
 
 class RAGClient:
-    """RAGクライアントクラス"""
-    
     def __init__(self, config: Optional[RAGConfig] = None):
         self.config = config or RAGConfig()
         self.vector_store = None
@@ -18,7 +12,6 @@ class RAGClient:
         self._initialized = False
     
     def _initialize(self):
-        """ベクトルストアとLLMを初期化"""
         if self._initialized:
             return
         
@@ -39,7 +32,6 @@ class RAGClient:
         self._initialized = True
     
     def _build_prompt(self, question: str, context: str, chat_history: Optional[List[Dict[str, str]]] = None) -> str:
-        """プロンプトを構築"""
         prompt_parts = [
             "以下のコンテキスト情報を使用して、質問に答えてください。",
             "コンテキスト情報に基づいて回答し、コンテキストにない情報は推測せずに「わかりません」と答えてください。",
@@ -69,21 +61,6 @@ class RAGClient:
         question: str,
         chat_history: Optional[List[Dict[str, str]]] = None
     ) -> Dict[str, Any]:
-        """
-        RAGクエリを実行
-        
-        Args:
-            question: 質問文
-            chat_history: 会話履歴 [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]
-        
-        Returns:
-            {
-                "answer": str,
-                "sources": List[Dict],
-                "num_sources": int,
-                "question": str
-            }
-        """
         if not self._initialized:
             self._initialize()
         
@@ -123,22 +100,6 @@ class RAGClient:
         self,
         messages: List[Dict[str, str]]
     ) -> Dict[str, Any]:
-        """
-        チャット補完形式でRAGクエリを実行
-        
-        Args:
-            messages: メッセージリスト [{"role": "user", "content": "..."}]
-        
-        Returns:
-            {
-                "choices": [{
-                    "message": {
-                        "role": "assistant",
-                        "content": str
-                    }
-                }]
-            }
-        """
         if not messages:
             return {
                 "choices": [{
