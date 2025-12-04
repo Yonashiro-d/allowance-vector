@@ -17,6 +17,7 @@ dbutils.library.restartPython()
 from typing import Dict, Any, List
 from pyspark.sql import SparkSession
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.service.serving import EndpointCoreConfigInput, ServedModelInput
 from databricks_langchain import ChatDatabricks, DatabricksVectorSearch
 from langchain_huggingface import HuggingFaceEmbeddings
 import mlflow
@@ -257,30 +258,27 @@ model_version = 1
 existing_endpoints = w.serving_endpoints.list()
 endpoint_exists = any(ep.name == endpoint_name for ep in existing_endpoints)
 
+served_model = ServedModelInput(
+    name=model_name,
+    model_name=model_name,
+    model_version=str(model_version),
+    workload_size="Small",
+    scale_to_zero_enabled=True
+)
+
 if endpoint_exists:
     w.serving_endpoints.update_config(
         name=endpoint_name,
-        served_models=[{
-            "name": model_name,
-            "model_name": model_name,
-            "model_version": str(model_version),
-            "workload_size": "Small",
-            "scale_to_zero_enabled": True
-        }]
+        served_models=[served_model]
     )
     print(f"Endpoint updated: {endpoint_name}")
 else:
+    config = EndpointCoreConfigInput(
+        served_models=[served_model]
+    )
     w.serving_endpoints.create(
         name=endpoint_name,
-        config={
-            "served_models": [{
-                "name": model_name,
-                "model_name": model_name,
-                "model_version": str(model_version),
-                "workload_size": "Small",
-                "scale_to_zero_enabled": True
-            }]
-        }
+        config=config
     )
     print(f"Endpoint created: {endpoint_name}")
 
