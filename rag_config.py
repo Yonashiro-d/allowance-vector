@@ -10,6 +10,7 @@ class RAGConfig:
         vector_index_name: Optional[str] = None,
         query_embedding_model: Optional[str] = None,
         llm_endpoint: Optional[str] = None,
+        serving_endpoint_name: Optional[str] = None,
         retriever_top_k: int = 5
     ):
         self.catalog = catalog or os.environ.get("CATALOG", "hhhd_demo_itec")
@@ -26,6 +27,10 @@ class RAGConfig:
             "LLM_ENDPOINT",
             "databricks-meta-llama-3-1-405b-instruct"
         )
+        self.serving_endpoint_name = serving_endpoint_name or os.environ.get(
+            "SERVING_ENDPOINT_NAME",
+            "commuting-allowance-rag-endpoint"
+        )
         self.retriever_top_k = retriever_top_k if retriever_top_k else int(
             os.environ.get("RETRIEVER_TOP_K", "5")
         )
@@ -37,6 +42,7 @@ class RAGConfig:
             "VECTOR_INDEX_NAME": self.vector_index_name,
             "QUERY_EMBEDDING_MODEL": self.query_embedding_model,
             "LLM_ENDPOINT": self.llm_endpoint,
+            "SERVING_ENDPOINT_NAME": self.serving_endpoint_name,
             "RETRIEVER_TOP_K": str(self.retriever_top_k)
         }
     
