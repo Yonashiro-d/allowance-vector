@@ -14,12 +14,10 @@ dbutils.library.restartPython()
 
 # COMMAND ----------
 
-from typing import Dict, Any, List
+from typing import Dict, Any
 from pyspark.sql import SparkSession
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.serving import EndpointCoreConfigInput, ServedModelInput
-from databricks_langchain import ChatDatabricks, DatabricksVectorSearch
-from langchain_huggingface import HuggingFaceEmbeddings
 import mlflow
 import mlflow.pyfunc
 
@@ -30,63 +28,27 @@ workspace_url = SparkSession.getActiveSession().conf.get("spark.databricks.works
 
 # COMMAND ----------
 
-CATALOG = "hhhd_demo_itec"
-SCHEMA = "allowance_payment_rules"
-VECTOR_INDEX_NAME = f"{CATALOG}.{SCHEMA}.commuting_allowance_index"
-QUERY_EMBEDDING_MODEL = "cl-nagoya/ruri-v3-310m"
-LLM_ENDPOINT = "databricks-meta-llama-3-1-405b-instruct"
-RETRIEVER_TOP_K = 5
+from rag_config import RAGConfig
+from rag_client import RAGClient
 
-print(f"CATALOG: {CATALOG}")
-print(f"SCHEMA: {SCHEMA}")
-print(f"VECTOR_INDEX_NAME: {VECTOR_INDEX_NAME}")
-print(f"QUERY_EMBEDDING_MODEL: {QUERY_EMBEDDING_MODEL}")
-print(f"LLM_ENDPOINT: {LLM_ENDPOINT}")
-print(f"RETRIEVER_TOP_K: {RETRIEVER_TOP_K}")
+config = RAGConfig()
+print(f"CATALOG: {config.catalog}")
+print(f"SCHEMA: {config.schema}")
+print(f"VECTOR_INDEX_NAME: {config.vector_index_name}")
+print(f"QUERY_EMBEDDING_MODEL: {config.query_embedding_model}")
+print(f"LLM_ENDPOINT: {config.llm_endpoint}")
+print(f"RETRIEVER_TOP_K: {config.retriever_top_k}")
 
 # COMMAND ----------
 
-embedding_model = HuggingFaceEmbeddings(model_name=QUERY_EMBEDDING_MODEL)
-
-vector_store = DatabricksVectorSearch(
-    index_name=VECTOR_INDEX_NAME,
-    embedding=embedding_model,
-    text_column="chunked_text",
-    columns=["chunk_id", "chunked_text"]
-)
-
-llm = ChatDatabricks(
-    endpoint=LLM_ENDPOINT,
-    extra_params={"temperature": 0.1}
-)
+rag_client = RAGClient(config)
+rag_client._initialize()
 
 # COMMAND ----------
 
 def query_rag(question: str) -> Dict[str, Any]:
-    documents = vector_store.similarity_search(question, k=RETRIEVER_TOP_K)
-    context = "\n\n".join([doc.page_content for doc in documents])
-
-    prompt = f"""以下のコンテキスト情報を使用して、質問に答えてください。
-コンテキスト情報に基づいて回答し、コンテキストにない情報は推測せずに「わかりません」と答えてください。
-
-コンテキスト情報:
-{context}
-
-質問: {question}
-
-回答:"""
-
-    response = llm.invoke(prompt)
-    answer = response.content if hasattr(response, 'content') else str(response)
-    
-    sources = [{"content": doc.page_content, "metadata": doc.metadata} for doc in documents]
-    
-    return {
-        "question": question,
-        "answer": answer,
-        "sources": sources,
-        "num_sources": len(sources)
-    }
+    """RAGクエリ関数（後方互換性のため保持）"""
+    return rag_client.query(question)
 
 # COMMAND ----------
 
@@ -97,32 +59,21 @@ class RAGModel(mlflow.pyfunc.PythonModel):
         self.retriever_top_k = 5
     
     def load_context(self, context):
-        import os
-        from databricks_langchain import ChatDatabricks, DatabricksVectorSearch
-        from langchain_huggingface import HuggingFaceEmbeddings
+        import traceback
         
-        catalog = os.environ.get("CATALOG", "hhhd_demo_itec")
-        schema = os.environ.get("SCHEMA", "allowance_payment_rules")
-        vector_index_name = os.environ.get("VECTOR_INDEX_NAME", f"{catalog}.{schema}.commuting_allowance_index")
-        query_embedding_model = os.environ.get("QUERY_EMBEDDING_MODEL", "cl-nagoya/ruri-v3-310m")
-        llm_endpoint = os.environ.get("LLM_ENDPOINT", "databricks-meta-llama-3-1-405b-instruct")
-        retriever_top_k = int(os.environ.get("RETRIEVER_TOP_K", "5"))
-        
-        embedding_model = HuggingFaceEmbeddings(model_name=query_embedding_model)
-        
-        self.vector_store = DatabricksVectorSearch(
-            index_name=vector_index_name,
-            embedding=embedding_model,
-            text_column="chunked_text",
-            columns=["chunk_id", "chunked_text"]
-        )
-        
-        self.llm = ChatDatabricks(
-            endpoint=llm_endpoint,
-            extra_params={"temperature": 0.1}
-        )
-        
-        self.retriever_top_k = retriever_top_k
+        try:
+            from rag_config import RAGConfig
+            from rag_client import RAGClient
+            
+            config = RAGConfig()
+            self.rag_client = RAGClient(config)
+            self.rag_client._initialize()
+            
+            print("Context loaded successfully")
+        except Exception as e:
+            error_msg = f"Error loading context: {str(e)}\n{traceback.format_exc()}"
+            print(error_msg)
+            raise RuntimeError(error_msg) from e
     
     def predict(self, context, model_input):
         import json
@@ -165,30 +116,8 @@ class RAGModel(mlflow.pyfunc.PythonModel):
             }
         
         try:
-            documents = self.vector_store.similarity_search(question, k=self.retriever_top_k)
-            context_text = "\n\n".join([doc.page_content for doc in documents])
-            
-            prompt = f"""以下のコンテキスト情報を使用して、質問に答えてください。
-コンテキスト情報に基づいて回答し、コンテキストにない情報は推測せずに「わかりません」と答えてください。
-
-コンテキスト情報:
-{context_text}
-
-質問: {question}
-
-回答:"""
-        
-            response = self.llm.invoke(prompt)
-            answer = response.content if hasattr(response, 'content') else str(response)
-            
-            return {
-                "choices": [{
-                    "message": {
-                        "role": "assistant",
-                        "content": answer
-                    }
-                }]
-            }
+            result = self.rag_client.query_chat_completion(messages)
+            return result
         except Exception as e:
             return {
                 "choices": [{
@@ -224,14 +153,7 @@ with mlflow.start_run():
     }
     sample_output = query_rag(input_example["messages"][0]["content"])
     
-    env_vars = {
-        "CATALOG": CATALOG,
-        "SCHEMA": SCHEMA,
-        "VECTOR_INDEX_NAME": VECTOR_INDEX_NAME,
-        "QUERY_EMBEDDING_MODEL": QUERY_EMBEDDING_MODEL,
-        "LLM_ENDPOINT": LLM_ENDPOINT,
-        "RETRIEVER_TOP_K": str(RETRIEVER_TOP_K)
-    }
+    env_vars = config.to_dict()
     
     import sys
     conda_env = {
@@ -267,8 +189,8 @@ with mlflow.start_run():
     
     mlflow.log_params(env_vars)
     mlflow.log_metric("num_sources", sample_output.get("num_sources", 0))
-    mlflow.set_tag("embedding_model", QUERY_EMBEDDING_MODEL)
-    mlflow.set_tag("llm", LLM_ENDPOINT)
+    mlflow.set_tag("embedding_model", config.query_embedding_model)
+    mlflow.set_tag("llm", config.llm_endpoint)
     
     print(f"Model logged: {mlflow.active_run().info.run_id}")
 
@@ -276,7 +198,17 @@ with mlflow.start_run():
 
 endpoint_name = "commuting-allowance-rag-endpoint"
 model_name = "commuting_allowance_rag_model"
-model_version = 1
+
+try:
+    from mlflow.tracking import MlflowClient
+    client = MlflowClient()
+    latest_version = client.get_latest_versions(model_name, stages=["None"])[0]
+    model_version = int(latest_version.version)
+    print(f"Using latest model version: {model_version}")
+except Exception as e:
+    print(f"Could not get latest model version: {e}")
+    model_version = 1
+    print(f"Using default model version: {model_version}")
 
 existing_endpoints = w.serving_endpoints.list()
 endpoint_exists = any(ep.name == endpoint_name for ep in existing_endpoints)
