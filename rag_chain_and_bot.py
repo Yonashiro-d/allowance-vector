@@ -22,7 +22,8 @@
 # MAGIC   databricks-vectorsearch \
 # MAGIC   databricks-sdk \
 # MAGIC   mlflow \
-# MAGIC   pandas
+# MAGIC   pandas \
+# MAGIC   sentence-transformers
 
 # COMMAND ----------
 
@@ -34,6 +35,8 @@ from typing import Dict, Any, List
 from pyspark.sql import SparkSession
 from databricks.sdk import WorkspaceClient
 from databricks_langchain import ChatDatabricks, DatabricksVectorSearch
+from sentence_transformers import SentenceTransformer
+from langchain.embeddings.base import Embeddings
 import mlflow
 import mlflow.pyfunc
 
@@ -82,13 +85,40 @@ print(f"LLM Endpoint: {LLM_ENDPOINT}")
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ### Embeddingモデルの初期化
+
+# COMMAND ----------
+
+# Embeddingモデルを初期化（vector_preparation.pyと同じモデルを使用）
+class SentenceTransformerEmbeddings(Embeddings):
+    """SentenceTransformerをLangChainのEmbeddingsインターフェースに適合させる"""
+    def __init__(self, model_name: str):
+        self.model = SentenceTransformer(model_name)
+    
+    def embed_query(self, text: str) -> List[float]:
+        """クエリテキストをベクトル化"""
+        return self.model.encode(text, show_progress_bar=False).tolist()
+    
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        """複数のテキストをベクトル化"""
+        embeddings = self.model.encode(texts, show_progress_bar=False)
+        return embeddings.tolist()
+
+# Embeddingモデルを初期化
+embeddings = SentenceTransformerEmbeddings(QUERY_EMBEDDING_MODEL)
+print(f"Embedding model initialized: {QUERY_EMBEDDING_MODEL}")
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ### Vector Storeの設定
 
 # COMMAND ----------
 
-# DatabricksVectorSearchは内部でEmbeddingモデルを自動的に使用します
+# DatabricksVectorSearchにEmbeddingモデルを指定
 vector_store = DatabricksVectorSearch(
-    index_name=VECTOR_INDEX_NAME
+    index_name=VECTOR_INDEX_NAME,
+    embedding=embeddings
 )
 print("Vector Store initialized with databricks-langchain")
 
@@ -226,19 +256,35 @@ class RAGModel(mlflow.pyfunc.PythonModel):
         """
         import os
         from databricks_langchain import ChatDatabricks, DatabricksVectorSearch
+        from sentence_transformers import SentenceTransformer
+        from langchain.embeddings.base import Embeddings
         
         # 設定を環境変数から取得
         catalog = os.environ.get("CATALOG", "hhhd_demo_itec")
         schema = os.environ.get("SCHEMA", "allowance_payment_rules")
         vector_index_name = os.environ.get("VECTOR_INDEX_NAME", f"{catalog}.{schema}.commuting_allowance_index")
+        query_embedding_model = os.environ.get("QUERY_EMBEDDING_MODEL", "cl-nagoya/ruri-v3-310m")
         llm_endpoint = os.environ.get("LLM_ENDPOINT", "databricks-dbrx-instruct")
         llm_temperature = float(os.environ.get("LLM_TEMPERATURE", "0.1"))
         llm_max_tokens = int(os.environ.get("LLM_MAX_TOKENS", "500"))
         retriever_top_k = int(os.environ.get("RETRIEVER_TOP_K", "5"))
         
+        # Embeddingモデルを初期化
+        class SentenceTransformerEmbeddings(Embeddings):
+            def __init__(self, model_name: str):
+                self.model = SentenceTransformer(model_name)
+            def embed_query(self, text: str):
+                return self.model.encode(text, show_progress_bar=False).tolist()
+            def embed_documents(self, texts: List[str]):
+                embeddings = self.model.encode(texts, show_progress_bar=False)
+                return embeddings.tolist()
+        
+        embeddings = SentenceTransformerEmbeddings(query_embedding_model)
+        
         # Vector Storeを設定
         self.vector_store = DatabricksVectorSearch(
-            index_name=vector_index_name
+            index_name=vector_index_name,
+            embedding=embeddings
         )
         
         # LLMを初期化
@@ -406,7 +452,8 @@ with mlflow.start_run():
                     "databricks-vectorsearch>=0.1.0",
                     "databricks-sdk>=0.1.0",
                     "mlflow>=2.0.0",
-                    "pandas>=1.5.0"
+                    "pandas>=1.5.0",
+                    "sentence-transformers>=2.0.0"
                 ]
             }
         ]
