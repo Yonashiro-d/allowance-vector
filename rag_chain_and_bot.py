@@ -258,6 +258,25 @@ model_version = 1
 existing_endpoints = w.serving_endpoints.list()
 endpoint_exists = any(ep.name == endpoint_name for ep in existing_endpoints)
 
+if endpoint_exists:
+    import time
+    max_wait_time = 120
+    wait_interval = 5
+    elapsed_time = 0
+    
+    endpoint = w.serving_endpoints.get(endpoint_name)
+    state = endpoint.state
+    print(f"Existing endpoint state: {state}")
+    
+    while hasattr(state, 'config_update') and state.config_update == "IN_PROGRESS":
+        if elapsed_time >= max_wait_time:
+            raise TimeoutError(f"Endpoint update timeout after {max_wait_time} seconds")
+        print(f"Waiting for endpoint update to complete... ({elapsed_time}s)")
+        time.sleep(wait_interval)
+        elapsed_time += wait_interval
+        endpoint = w.serving_endpoints.get(endpoint_name)
+        state = endpoint.state
+
 served_model = ServedModelInput(
     name=model_name,
     model_name=model_name,
@@ -267,13 +286,21 @@ served_model = ServedModelInput(
 )
 
 if endpoint_exists:
-    w.serving_endpoints.update_config(
-        name=endpoint_name,
-        served_models=[served_model]
-    )
-    print(f"Endpoint updated: {endpoint_name}")
+    try:
+        w.serving_endpoints.update_config(
+            name=endpoint_name,
+            served_models=[served_model]
+        )
+        print(f"Endpoint updated: {endpoint_name}")
+    except Exception as e:
+        if "currently being updated" in str(e):
+            print(f"Endpoint is still being updated. Please wait and try again later.")
+            print(f"Current endpoint state: {endpoint.state}")
+        else:
+            raise
 else:
     config = EndpointCoreConfigInput(
+        name=endpoint_name,
         served_models=[served_model]
     )
     w.serving_endpoints.create(
