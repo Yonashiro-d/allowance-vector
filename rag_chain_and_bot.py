@@ -65,7 +65,7 @@ llm = ChatDatabricks(
 def query_rag(question: str) -> Dict[str, Any]:
     documents = vector_store.similarity_search(question, k=RETRIEVER_TOP_K)
     context = "\n\n".join([doc.page_content for doc in documents])
-    
+
     prompt = f"""以下のコンテキスト情報を使用して、質問に答えてください。
 コンテキスト情報に基づいて回答し、コンテキストにない情報は推測せずに「わかりません」と答えてください。
 
@@ -75,7 +75,7 @@ def query_rag(question: str) -> Dict[str, Any]:
 質問: {question}
 
 回答:"""
-    
+
     response = llm.invoke(prompt)
     answer = response.content if hasattr(response, 'content') else str(response)
     
@@ -125,23 +125,50 @@ class RAGModel(mlflow.pyfunc.PythonModel):
         self.retriever_top_k = retriever_top_k
     
     def predict(self, context, model_input):
-        questions: List[str] = []
-        if isinstance(model_input, str):
-            questions = [model_input]
-        elif isinstance(model_input, list):
-            questions = model_input
-        elif hasattr(model_input, 'iloc'):
-            questions = model_input.iloc[:, 0].tolist()
-        else:
-            questions = [str(model_input)]
+        import json
         
-        results = []
-        for question in questions:
+        if isinstance(model_input, str):
             try:
-                documents = self.vector_store.similarity_search(question, k=self.retriever_top_k)
-                context_text = "\n\n".join([doc.page_content for doc in documents])
-                
-                prompt = f"""以下のコンテキスト情報を使用して、質問に答えてください。
+                model_input = json.loads(model_input)
+            except:
+                model_input = {"messages": [{"role": "user", "content": model_input}]}
+        elif hasattr(model_input, 'iloc'):
+            model_input = model_input.to_dict('records')[0] if len(model_input) > 0 else {}
+        elif isinstance(model_input, list) and len(model_input) > 0:
+            model_input = model_input[0]
+        
+        if not isinstance(model_input, dict):
+            model_input = {"messages": [{"role": "user", "content": str(model_input)}]}
+        
+        messages = model_input.get("messages", [])
+        if not messages:
+            return {
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": "メッセージが見つかりませんでした。"
+                    }
+                }]
+            }
+        
+        last_message = messages[-1]
+        question = last_message.get("content", "") if isinstance(last_message, dict) else str(last_message)
+        
+        if not question:
+            return {
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": "質問内容が空です。"
+                    }
+                }]
+            }
+        
+        try:
+            documents = self.vector_store.similarity_search(question, k=self.retriever_top_k)
+            context_text = "\n\n".join([doc.page_content for doc in documents])
+            
+            prompt = f"""以下のコンテキスト情報を使用して、質問に答えてください。
 コンテキスト情報に基づいて回答し、コンテキストにない情報は推測せずに「わかりません」と答えてください。
 
 コンテキスト情報:
@@ -150,28 +177,27 @@ class RAGModel(mlflow.pyfunc.PythonModel):
 質問: {question}
 
 回答:"""
-                
-                response = self.llm.invoke(prompt)
-                answer = response.content if hasattr(response, 'content') else str(response)
-                
-                sources = [{"content": doc.page_content[:200], "metadata": doc.metadata} for doc in documents]
-                
-                results.append({
-                    "question": question,
-                    "answer": answer,
-                    "num_sources": len(sources),
-                    "sources": sources
-                })
-            except Exception as e:
-                results.append({
-                    "question": question,
-                    "answer": f"エラーが発生しました: {str(e)}",
-                    "num_sources": 0,
-                    "sources": [],
-                    "error": str(e)
-                })
         
-        return results
+            response = self.llm.invoke(prompt)
+            answer = response.content if hasattr(response, 'content') else str(response)
+            
+            return {
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": answer
+                    }
+                }]
+            }
+        except Exception as e:
+            return {
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": f"エラーが発生しました: {str(e)}"
+                    }
+                }]
+            }
 
 # COMMAND ----------
 
@@ -189,17 +215,14 @@ with mlflow.start_run():
     from mlflow.models import ModelSignature
     from mlflow.types import DataType, Schema, ColSpec
     
-    input_schema = Schema([ColSpec(DataType.string, "question")])
-    output_schema = Schema([
-        ColSpec(DataType.string, "question"),
-        ColSpec(DataType.string, "answer"),
-        ColSpec(DataType.integer, "num_sources"),
-        ColSpec(DataType.string, "sources")
-    ])
-    signature = ModelSignature(inputs=input_schema, outputs=output_schema)
+    signature = None
     
-    input_example = {"question": "通勤手当はいくらまで支給されますか？"}
-    sample_output = query_rag(input_example["question"])
+    input_example = {
+        "messages": [
+            {"role": "user", "content": "通勤手当はいくらまで支給されますか？"}
+        ]
+    }
+    sample_output = query_rag(input_example["messages"][0]["content"])
     
     env_vars = {
         "CATALOG": CATALOG,
