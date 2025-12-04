@@ -33,7 +33,7 @@ CATALOG = "hhhd_demo_itec"
 SCHEMA = "allowance_payment_rules"
 VECTOR_INDEX_NAME = f"{CATALOG}.{SCHEMA}.commuting_allowance_index"
 QUERY_EMBEDDING_MODEL = "cl-nagoya/ruri-v3-310m"
-LLM_ENDPOINT = "claude-3-5-sonnet-latest"
+LLM_ENDPOINT = "databricks-meta-llama-3-1-405b-instruct"
 RETRIEVER_TOP_K = 5
 
 print(f"CATALOG: {CATALOG}")
@@ -104,7 +104,7 @@ class RAGModel(mlflow.pyfunc.PythonModel):
         schema = os.environ.get("SCHEMA", "allowance_payment_rules")
         vector_index_name = os.environ.get("VECTOR_INDEX_NAME", f"{catalog}.{schema}.commuting_allowance_index")
         query_embedding_model = os.environ.get("QUERY_EMBEDDING_MODEL", "cl-nagoya/ruri-v3-310m")
-        llm_endpoint = os.environ.get("LLM_ENDPOINT", "claude-3-5-sonnet-latest")
+        llm_endpoint = os.environ.get("LLM_ENDPOINT", "databricks-meta-llama-3-1-405b-instruct")
         retriever_top_k = int(os.environ.get("RETRIEVER_TOP_K", "5"))
         
         embedding_model = HuggingFaceEmbeddings(model_name=query_embedding_model)
