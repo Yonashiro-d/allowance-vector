@@ -146,15 +146,29 @@ with mlflow.start_run():
     
     import sys
     import os
-    from pathlib import Path
     
     notebook_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebookPath().get()
-    repo_root = "/".join(notebook_path.split("/")[:-1]) if "/" in notebook_path else "."
+    
+    if "Repos" not in notebook_path:
+        raise ValueError("Notebook must be run from Repos")
+    
+    parts = notebook_path.split("/")
+    repos_idx = parts.index("Repos")
+    repo_root = f"/Workspace/Repos/{parts[repos_idx + 1]}/{parts[repos_idx + 2]}"
     
     code_paths = [
-        os.path.join(repo_root, "rag_config.py"),
-        os.path.join(repo_root, "rag_client.py")
+        f"{repo_root}/rag_config.py",
+        f"{repo_root}/rag_client.py"
     ]
+    
+    files = dbutils.fs.ls(repo_root)
+    file_names = [f.name.rstrip('/') for f in files]
+    for code_path in code_paths:
+        file_name = os.path.basename(code_path)
+        if file_name not in file_names:
+            raise FileNotFoundError(f"File not found: {code_path}. Available files: {file_names}")
+    
+    print(f"Using code_paths: {code_paths}")
     
     conda_env = {
         "channels": ["defaults", "conda-forge"],
