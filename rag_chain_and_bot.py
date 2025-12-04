@@ -145,6 +145,17 @@ with mlflow.start_run():
     env_vars = config.to_dict()
     
     import sys
+    import os
+    from pathlib import Path
+    
+    notebook_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebookPath().get()
+    repo_root = "/".join(notebook_path.split("/")[:-1]) if "/" in notebook_path else "."
+    
+    code_paths = [
+        os.path.join(repo_root, "rag_config.py"),
+        os.path.join(repo_root, "rag_client.py")
+    ]
+    
     conda_env = {
         "channels": ["defaults", "conda-forge"],
         "dependencies": [
@@ -173,6 +184,7 @@ with mlflow.start_run():
         signature=None,
         input_example=input_example,
         conda_env=conda_env,
+        code_paths=code_paths,
         registered_model_name="commuting_allowance_rag_model"
     )
     
