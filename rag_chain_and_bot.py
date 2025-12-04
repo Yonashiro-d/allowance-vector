@@ -6,15 +6,7 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install -U \
-# MAGIC   langchain \
-# MAGIC   langchain-databricks \
-# MAGIC   databricks-langchain \
-# MAGIC   databricks-vectorsearch \
-# MAGIC   databricks-sdk \
-# MAGIC   mlflow \
-# MAGIC   pandas \
-# MAGIC   langchain-huggingface
+# MAGIC %pip install -U langchain langchain-databricks databricks-langchain databricks-vectorsearch databricks-sdk mlflow pandas langchain-huggingface sentence-transformers sentencepiece
 
 # COMMAND ----------
 
@@ -41,8 +33,15 @@ CATALOG = "hhhd_demo_itec"
 SCHEMA = "allowance_payment_rules"
 VECTOR_INDEX_NAME = f"{CATALOG}.{SCHEMA}.commuting_allowance_index"
 QUERY_EMBEDDING_MODEL = "cl-nagoya/ruri-v3-310m"
-LLM_ENDPOINT = "databricks-dbrx-instruct"
+LLM_ENDPOINT = "claude-3-5-sonnet-latest"
 RETRIEVER_TOP_K = 5
+
+print(f"CATALOG: {CATALOG}")
+print(f"SCHEMA: {SCHEMA}")
+print(f"VECTOR_INDEX_NAME: {VECTOR_INDEX_NAME}")
+print(f"QUERY_EMBEDDING_MODEL: {QUERY_EMBEDDING_MODEL}")
+print(f"LLM_ENDPOINT: {LLM_ENDPOINT}")
+print(f"RETRIEVER_TOP_K: {RETRIEVER_TOP_K}")
 
 # COMMAND ----------
 
@@ -105,7 +104,7 @@ class RAGModel(mlflow.pyfunc.PythonModel):
         schema = os.environ.get("SCHEMA", "allowance_payment_rules")
         vector_index_name = os.environ.get("VECTOR_INDEX_NAME", f"{catalog}.{schema}.commuting_allowance_index")
         query_embedding_model = os.environ.get("QUERY_EMBEDDING_MODEL", "cl-nagoya/ruri-v3-310m")
-        llm_endpoint = os.environ.get("LLM_ENDPOINT", "databricks-dbrx-instruct")
+        llm_endpoint = os.environ.get("LLM_ENDPOINT", "claude-3-5-sonnet-latest")
         retriever_top_k = int(os.environ.get("RETRIEVER_TOP_K", "5"))
         
         embedding_model = HuggingFaceEmbeddings(model_name=query_embedding_model)
@@ -179,12 +178,9 @@ experiment_name = f"/Users/{w.current_user.me().user_name}/rag_chain_experiment"
 try:
     experiment = mlflow.get_experiment_by_name(experiment_name)
     if experiment is None:
-        experiment_id = mlflow.create_experiment(experiment_name)
-    else:
-        experiment_id = experiment.experiment_id
-except Exception as e:
-    print(f"Experiment creation error: {e}")
-    experiment_id = mlflow.create_experiment(experiment_name)
+        mlflow.create_experiment(experiment_name)
+except Exception:
+    mlflow.create_experiment(experiment_name)
 
 mlflow.set_experiment(experiment_name)
 
@@ -228,7 +224,9 @@ with mlflow.start_run():
                     "databricks-sdk>=0.1.0",
                     "mlflow>=2.0.0",
                     "pandas>=1.5.0",
-                    "langchain-huggingface>=0.0.1"
+                    "langchain-huggingface>=0.0.1",
+                    "sentence-transformers>=2.0.0",
+                    "sentencepiece>=0.1.0"
                 ]
             }
         ]
@@ -248,7 +246,7 @@ with mlflow.start_run():
     mlflow.set_tag("embedding_model", QUERY_EMBEDDING_MODEL)
     mlflow.set_tag("llm", LLM_ENDPOINT)
     
-    print(f"Model logged with run_id: {mlflow.active_run().info.run_id}")
+    print(f"Model logged: {mlflow.active_run().info.run_id}")
 
 # COMMAND ----------
 
@@ -270,7 +268,7 @@ if endpoint_exists:
             "scale_to_zero_enabled": True
         }]
     )
-    print(f"Endpoint '{endpoint_name}' updated")
+    print(f"Endpoint updated: {endpoint_name}")
 else:
     w.serving_endpoints.create(
         name=endpoint_name,
@@ -284,11 +282,7 @@ else:
             }]
         }
     )
-    print(f"Endpoint '{endpoint_name}' created")
+    print(f"Endpoint created: {endpoint_name}")
 
 endpoint = w.serving_endpoints.get(endpoint_name)
-print(f"Endpoint Status: {endpoint.state}")
-
-# COMMAND ----------
-
-
+print(f"Status: {endpoint.state}")
