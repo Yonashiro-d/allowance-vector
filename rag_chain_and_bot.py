@@ -213,7 +213,10 @@ with mlflow.start_run():
         input_example=input_example,
         conda_env=conda_env,
         code_paths=code_paths,
-        registered_model_name="commuting_allowance_rag_model"
+        registered_model_name="commuting_allowance_rag_model",
+        resource_dependencies={
+            "databricks": True
+        }
     )
     
     mlflow.log_params(env_vars)
