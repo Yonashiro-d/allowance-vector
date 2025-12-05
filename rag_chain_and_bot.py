@@ -195,6 +195,7 @@ with mlflow.start_run():
                     "databricks-langchain>=0.1.0",
                     "databricks-vectorsearch>=0.1.0",
                     "databricks-sdk>=0.1.0",
+                    "databricks-feature-lookup==1.9",
                     "mlflow>=2.0.0",
                     "pandas>=1.5.0",
                     "langchain-huggingface>=0.0.1",
