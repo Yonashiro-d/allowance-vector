@@ -59,7 +59,19 @@ class RAGModel(mlflow.pyfunc.PythonModel):
     
     def load_context(self, context):
         import traceback
+        import os
+        
         try:
+            if not os.environ.get("DATABRICKS_HOST"):
+                workspace_url = os.environ.get("DATABRICKS_WORKSPACE_URL")
+                if workspace_url:
+                    os.environ["DATABRICKS_HOST"] = workspace_url
+            
+            if not os.environ.get("DATABRICKS_TOKEN"):
+                api_token = os.environ.get("DATABRICKS_API_TOKEN")
+                if api_token:
+                    os.environ["DATABRICKS_TOKEN"] = api_token
+            
             from rag_config import RAGConfig
             from rag_client import RAGClient
             config = RAGConfig()
@@ -262,15 +274,18 @@ if endpoint_exists:
         endpoint = w.serving_endpoints.get(endpoint_name)
         state = endpoint.state
 
+environment_vars = {}
+if workspace_url:
+    environment_vars["DATABRICKS_WORKSPACE_URL"] = workspace_url
+    environment_vars["DATABRICKS_HOST"] = workspace_url
+
 served_model = ServedModelInput(
     name=model_name,
     model_name=model_name,
     model_version=str(model_version),
     workload_size="Small",
     scale_to_zero_enabled=True,
-    environment_vars={
-        "DATABRICKS_HOST": workspace_url if workspace_url else ""
-    }
+    environment_vars=environment_vars if environment_vars else {}
 )
 
 if endpoint_exists:
