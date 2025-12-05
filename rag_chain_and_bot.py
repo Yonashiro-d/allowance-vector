@@ -213,10 +213,7 @@ with mlflow.start_run():
         input_example=input_example,
         conda_env=conda_env,
         code_paths=code_paths,
-        registered_model_name="commuting_allowance_rag_model",
-        resource_dependencies={
-            "databricks": True
-        }
+        registered_model_name="commuting_allowance_rag_model"
     )
     
     mlflow.log_params(env_vars)
@@ -270,7 +267,10 @@ served_model = ServedModelInput(
     model_name=model_name,
     model_version=str(model_version),
     workload_size="Small",
-    scale_to_zero_enabled=True
+    scale_to_zero_enabled=True,
+    environment_vars={
+        "DATABRICKS_HOST": workspace_url if workspace_url else ""
+    }
 )
 
 if endpoint_exists:
