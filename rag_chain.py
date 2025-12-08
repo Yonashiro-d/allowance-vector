@@ -197,13 +197,23 @@ resources = [
     DatabricksServingEndpoint(endpoint_name=chain_config["llm_model_serving_endpoint_name"])
 ]
 
-# 入力例の定義
-# ChatCompletionRequest形式を使用
+# 入力例と出力例の定義（シグネチャ推論用）
 input_example = {
     "messages": [
         {"role": "user", "content": "通勤手当はいくらまで支給されますか？"}
     ]
 }
+
+output_example = {
+    "messages": [
+        {"role": "user", "content": "通勤手当はいくらまで支給されますか？"},
+        {"role": "assistant", "content": "通勤手当は月額15,000円まで支給されます。"}
+    ]
+}
+
+# シグネチャを推論
+from mlflow.models import infer_signature
+signature = infer_signature(input_example, output_example)
 
 with mlflow.start_run(run_name="commuting-allowance-rag-agent"):
     # PyFuncモデルとしてログ（agent.pyファイルを指定）
@@ -225,6 +235,7 @@ with mlflow.start_run(run_name="commuting-allowance-rag-agent"):
         ],
         resources=resources,
         input_example=input_example,
+        signature=signature,
         example_no_conversion=True,
         registered_model_name=UC_MODEL_NAME
     )
