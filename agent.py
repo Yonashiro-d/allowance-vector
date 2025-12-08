@@ -133,7 +133,10 @@ class RAGAgent(PythonModel):
             response = ChatCompletionResponse(choices=[choice])
             
             # Convert to dictionary for MLflow
-            results.append(response.to_dict())
+            # Only include 'choices' field to match agent framework expectations
+            # Exclude extra fields like 'created' that are not recognized by agent framework
+            response_dict = response.to_dict()
+            results.append({"choices": response_dict.get("choices", [])})
         
         return results
 
