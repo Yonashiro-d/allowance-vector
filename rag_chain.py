@@ -254,13 +254,40 @@ class RAGModel(mlflow.pyfunc.PythonModel):
                 }]
             }
 
-with mlflow.start_run():
-    input_example = {
-        "messages": [
-            {"role": "user", "content": "通勤手当はいくらまで支給されますか？"}
-        ]
-    }
-    
+# 入力例の定義
+input_example = {
+    "messages": [
+        {"role": "user", "content": "通勤手当はいくらまで支給されますか？"}
+    ]
+}
+
+# LangChainチェーンをMLflowにログ
+with mlflow.start_run(run_name="commuting-allowance-rag-chain"):
+    try:
+        logged_chain_info = mlflow.langchain.log_model(
+            lc_model=rag_chain,  # チェーンオブジェクトを直接渡す
+            model_config=chain_config,  # チェーン設定
+            artifact_path="chain",  # MLflowで必要なパス
+            input_example=input_example,  # 入力スキーマを保存
+        )
+        
+        print(f"LangChain model logged: {logged_chain_info.model_uri}")
+        
+        # チェーンをロードしてテスト実行（MLflow Trace UIで確認可能）
+        print("Testing the chain locally to see the MLflow Trace...")
+        loaded_chain = mlflow.langchain.load_model(logged_chain_info.model_uri)
+        test_result = loaded_chain.invoke(input_example)
+        
+        mlflow.log_dict(test_result, "chain_test_result.json")
+        print("Chain test executed successfully")
+        
+    except Exception as e:
+        print(f"Warning: Could not log LangChain model directly: {e}")
+        print("Falling back to PyFunc model logging...")
+        logged_chain_info = None
+
+# PyFuncモデルとしてもログ（Servingエンドポイント用）
+with mlflow.start_run(run_name="commuting-allowance-rag-model"):
     import sys
     import os
     import tempfile
@@ -323,7 +350,7 @@ with mlflow.start_run():
         ]
     }
     
-    mlflow.pyfunc.log_model(
+    logged_pyfunc_info = mlflow.pyfunc.log_model(
         artifact_path="rag_model",
         python_model=RAGModel(),
         signature=None,
@@ -347,25 +374,8 @@ with mlflow.start_run():
     mlflow.set_tag("model_type", "chat_completion")
     mlflow.set_tag("chain_type", "retrieval_chain")
     
-    print(f"Model logged: {mlflow.active_run().info.run_id}")
-    
-    # MLflow Trace UI用にチェーンを実行してトレースを記録
-    import mlflow.langchain
-    
-    test_input = {"input": "通勤手当はいくらまで支給されますか？"}
-    tracer = mlflow.langchain.MlflowLangchainTracer()
-    
-    print("Executing RAG chain with MLflow tracing...")
-    result = rag_chain.invoke(
-        test_input,
-        config={"callbacks": [tracer]}
-    )
-    
-    mlflow.log_dict(result, "chain_result.json")
-    
-    print("Trace recorded for MLflow Trace UI")
+    print(f"PyFunc model logged: {logged_pyfunc_info.model_uri}")
     print(f"Run ID: {mlflow.active_run().info.run_id}")
-    print("You can view the trace in MLflow UI under the 'Traces' tab")
 
 # COMMAND ----------
 
