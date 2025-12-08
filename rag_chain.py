@@ -198,17 +198,20 @@ resources = [
 ]
 
 # 入力例と出力例の定義（シグネチャ推論用）
-from mlflow.types.llm import ChatCompletionRequest, ChatCompletionResponse, ChatChoice, ChatMessage
+# エージェントフレームワークが認識できるように、messagesフィールドのみを含む形式を使用
+from mlflow.types.llm import ChatCompletionResponse, ChatChoice, ChatMessage
 
-# ChatCompletionRequestオブジェクトを作成
-input_example_obj = ChatCompletionRequest(
-    messages=[
-        ChatMessage(
-            role="user",
-            content="通勤手当はいくらまで支給されますか？"
-        )
+# 入力例：messagesフィールドのみを含む形式（エージェントフレームワークが期待する形式）
+# ChatCompletionRequestのto_dict()はtemperature、n、streamなどのオプショナルフィールドも含むため、
+# messagesフィールドのみを含む辞書を直接作成
+input_example = {
+    "messages": [
+        {
+            "role": "user",
+            "content": "通勤手当はいくらまで支給されますか？"
+        }
     ]
-)
+}
 
 # ChatCompletionResponseオブジェクトを作成
 output_example_obj = ChatCompletionResponse(
@@ -228,13 +231,10 @@ output_example_obj = ChatCompletionResponse(
 )
 
 # シグネチャを推論
-# ChatCompletionRequest/ChatCompletionResponseオブジェクトを使用してシグネチャを推論
+# messagesフィールドのみを含む入力例とChatCompletionResponseを使用してシグネチャを推論
 # これにより、エージェントフレームワークが認識できる形式のシグネチャが作成される
 from mlflow.models import infer_signature
-signature = infer_signature(input_example_obj.to_dict(), output_example_obj.to_dict())
-
-# input_exampleも辞書形式で保持（表示用）
-input_example = input_example_obj.to_dict()
+signature = infer_signature(input_example, output_example_obj.to_dict())
 
 with mlflow.start_run(run_name="commuting-allowance-rag-agent"):
     # PyFuncモデルとしてログ（agent.pyファイルを指定）
