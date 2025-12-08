@@ -220,6 +220,55 @@ with mlflow.start_run(run_name="commuting-allowance-rag-agent"):
             return {"input": content}
         return {"input": ""}
     
+    # loader_fn: モデルロード時にRAGチェーンを再構築する関数
+    # クロージャーとしてchain_config、config、messages_to_rag_inputをキャプチャ
+    def create_loader_fn(chain_config, config, messages_to_rag_input):
+        """loader_fnを生成するファクトリー関数"""
+        def loader_fn(path):
+            """モデルロード時にRAGチェーンを再構築"""
+            from langchain.chains import create_retrieval_chain
+            from langchain.chains.combine_documents import create_stuff_documents_chain
+            from langchain_core.prompts import ChatPromptTemplate
+            from langchain_core.runnables import RunnableLambda
+            from databricks_langchain import ChatDatabricks, DatabricksVectorSearch
+            from langchain_huggingface import HuggingFaceEmbeddings
+            
+            # Embeddingモデルを再構築
+            embedding_model = HuggingFaceEmbeddings(model_name=config.query_embedding_model)
+            
+            # VectorStoreを再構築
+            vector_store = DatabricksVectorSearch(
+                index_name=chain_config["vector_search_index"],
+                embedding=embedding_model,
+                text_column="chunked_text",
+                columns=["chunk_id", "chunked_text"]
+            )
+            
+            # LLMを再構築
+            llm = ChatDatabricks(
+                endpoint=chain_config["llm_model_serving_endpoint_name"],
+                extra_params={"temperature": 0.1}
+            )
+            
+            # Retrieverを再構築
+            retriever = vector_store.as_retriever(search_kwargs={"k": config.retriever_top_k})
+            
+            # Promptを再構築
+            prompt = ChatPromptTemplate.from_template(chain_config["llm_prompt_template"])
+            
+            # Document ChainとRAG Chainを再構築
+            document_chain = create_stuff_documents_chain(llm, prompt)
+            rag_chain = create_retrieval_chain(retriever, document_chain)
+            
+            # メッセージ形式への変換ラッパーと組み合わせ
+            agent_chain = RunnableLambda(messages_to_rag_input) | rag_chain
+            
+            return agent_chain
+        return loader_fn
+    
+    # loader_fnを生成
+    loader_fn = create_loader_fn(chain_config, config, messages_to_rag_input)
+    
     # ラッパーでRAGチェーンをラップ
     agent_chain = RunnableLambda(messages_to_rag_input) | rag_chain
     
@@ -236,6 +285,7 @@ with mlflow.start_run(run_name="commuting-allowance-rag-agent"):
             lc_model=agent_chain,
             artifact_path="agent",
             input_example=input_example,
+            loader_fn=loader_fn,
             registered_model_name=UC_MODEL_NAME
         )
         
