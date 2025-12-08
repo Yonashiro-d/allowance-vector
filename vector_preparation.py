@@ -99,15 +99,6 @@ print(f"PASS: Vector Search endpoint `{VECTOR_SEARCH_ENDPOINT}` exists")
 # COMMAND ----------
 
 def get_pdf_path(data_path: str = None, pdf_path: str = None) -> str:
-    """PDFファイルのパスを取得
-    
-    Args:
-        data_path: データディレクトリのパス（指定しない場合はRepos配下のルートを自動検出）
-        pdf_path: PDFファイルのフルパス（指定された場合はそのまま返す）
-    
-    Returns:
-        PDFファイルのパス
-    """
     # フルパスが指定されている場合はそのまま返す
     if pdf_path:
         if not pdf_path.lower().endswith('.pdf'):

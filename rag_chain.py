@@ -1,12 +1,12 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # RAGチェーン構築とBot実装
+# MAGIC # RAGチェーン構築
 # MAGIC
-# MAGIC Databricks Vector Searchを使用してRAGを構築し、MLflowでBotとしてデプロイします。
+# MAGIC Databricks Vector Searchを使用してRAGチェーンを構築します。
 
 # COMMAND ----------
 
-# MAGIC %pip install -U langchain langchain-databricks databricks-langchain databricks-vectorsearch databricks-sdk mlflow pandas langchain-huggingface sentence-transformers sentencepiece
+# MAGIC %pip install -U langchain langchain-core langchain-databricks databricks-langchain databricks-vectorsearch langchain-huggingface sentence-transformers sentencepiece mlflow databricks-sdk pypdf
 
 # COMMAND ----------
 
@@ -15,23 +15,28 @@ dbutils.library.restartPython()
 # COMMAND ----------
 
 from typing import Dict, Any
-from pyspark.sql import SparkSession
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.serving import EndpointCoreConfigInput, ServedModelInput
+from pyspark.sql import SparkSession
 import mlflow
 import mlflow.pyfunc
 
 spark = SparkSession.builder.getOrCreate()
 w = WorkspaceClient()
-
 workspace_url = SparkSession.getActiveSession().conf.get("spark.databricks.workspaceUrl", None)
 
 # COMMAND ----------
 
 from rag_config import RAGConfig
-from rag_client import RAGClient
+from langchain.chains import create_retrieval_chain
+from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain_core.prompts import ChatPromptTemplate
+from databricks_langchain import ChatDatabricks, DatabricksVectorSearch
+from langchain_huggingface import HuggingFaceEmbeddings
 
 config = RAGConfig()
+VECTOR_SEARCH_ENDPOINT = "databricks-bge-large-en-endpoint"
+
 print(f"CATALOG: {config.catalog}")
 print(f"SCHEMA: {config.schema}")
 print(f"VECTOR_INDEX_NAME: {config.vector_index_name}")
@@ -41,21 +46,110 @@ print(f"RETRIEVER_TOP_K: {config.retriever_top_k}")
 
 # COMMAND ----------
 
-rag_client = RAGClient(config)
-rag_client._initialize()
+# MAGIC %md
+# MAGIC ## ベクトルデータ準備の実行
+
+# COMMAND ----------
+
+def run_vector_preparation():
+    """ベクトルデータ準備ノートブックを実行"""
+    notebook_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebookPath().get()
+    current_dir = "/".join(notebook_path.split("/")[:-1]) if "/" in notebook_path else "."
+    vector_prep_path = f"{current_dir}/vector_preparation"
+    
+    print(f"Running vector preparation notebook: {vector_prep_path}")
+    
+    try:
+        dbutils.notebook.run(vector_prep_path, timeout_seconds=3600)
+        print("Vector preparation completed successfully")
+    except Exception as e:
+        print(f"Error running vector preparation: {e}")
+        raise
+
+run_vector_preparation()
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## RAGチェーン構築
+
+# COMMAND ----------
+
+chain_config = {
+    "llm_model_serving_endpoint_name": "databricks-llama-4-maverick",
+    "vector_search_endpoint_name": VECTOR_SEARCH_ENDPOINT,
+    "vector_search_index": config.vector_index_name,
+    "llm_prompt_template": """You are an assistant that answers questions. Use the following pieces of retrieved context to answer the question. Some pieces of context may be irrelevant, in which case you should not use them to form the answer.\n\nContext: {context}""",
+}
+
+print("Chain Config:")
+for key, value in chain_config.items():
+    print(f"  {key}: {value}")
+
+# COMMAND ----------
+
+def build_rag_chain(chain_config, config):
+    """RAGチェーンを構築"""
+    embedding_model = HuggingFaceEmbeddings(model_name=config.query_embedding_model)
+    
+    vector_store = DatabricksVectorSearch(
+        index_name=chain_config["vector_search_index"],
+        embedding=embedding_model,
+        text_column="chunked_text",
+        columns=["chunk_id", "chunked_text"]
+    )
+    
+    llm = ChatDatabricks(
+        endpoint=chain_config["llm_model_serving_endpoint_name"],
+        extra_params={"temperature": 0.1}
+    )
+    
+    retriever = vector_store.as_retriever(search_kwargs={"k": config.retriever_top_k})
+    prompt = ChatPromptTemplate.from_template(chain_config["llm_prompt_template"])
+    document_chain = create_stuff_documents_chain(llm, prompt)
+    rag_chain = create_retrieval_chain(retriever, document_chain)
+    
+    return rag_chain
+
+rag_chain = build_rag_chain(chain_config, config)
+print("RAG Chain created successfully")
 
 # COMMAND ----------
 
 def query_rag(question: str) -> Dict[str, Any]:
-    return rag_client.query(question)
+    result = rag_chain.invoke({"input": question})
+    return {
+        "question": question,
+        "answer": result.get("answer", ""),
+        "context": result.get("context", [])
+    }
+
+# COMMAND ----------
+
+def setup_mlflow_experiment():
+    """MLflow実験をセットアップ"""
+    experiment_name = f"/Users/{w.current_user.me().user_name}/rag_chain_experiment"
+    try:
+        experiment = mlflow.get_experiment_by_name(experiment_name)
+        if experiment is None:
+            mlflow.create_experiment(experiment_name)
+    except Exception:
+        mlflow.create_experiment(experiment_name)
+    mlflow.set_experiment(experiment_name)
+    return experiment_name
+
+experiment_name = setup_mlflow_experiment()
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## MLflowモデル登録
 
 # COMMAND ----------
 
 class RAGModel(mlflow.pyfunc.PythonModel):
     def __init__(self):
-        self.vector_store = None
-        self.llm = None
-        self.retriever_top_k = 5
+        self.rag_chain = None
     
     def load_context(self, context):
         import traceback
@@ -63,9 +157,9 @@ class RAGModel(mlflow.pyfunc.PythonModel):
         
         try:
             if not os.environ.get("DATABRICKS_HOST"):
-                workspace_url = os.environ.get("DATABRICKS_WORKSPACE_URL")
-                if workspace_url:
-                    os.environ["DATABRICKS_HOST"] = workspace_url
+                workspace_url_env = os.environ.get("DATABRICKS_WORKSPACE_URL")
+                if workspace_url_env:
+                    os.environ["DATABRICKS_HOST"] = workspace_url_env
             
             if not os.environ.get("DATABRICKS_TOKEN"):
                 api_token = os.environ.get("DATABRICKS_API_TOKEN")
@@ -73,10 +167,41 @@ class RAGModel(mlflow.pyfunc.PythonModel):
                     os.environ["DATABRICKS_TOKEN"] = api_token
             
             from rag_config import RAGConfig
-            from rag_client import RAGClient
+            from langchain.chains import create_retrieval_chain
+            from langchain.chains.combine_documents import create_stuff_documents_chain
+            from langchain_core.prompts import ChatPromptTemplate
+            from databricks_langchain import ChatDatabricks, DatabricksVectorSearch
+            from langchain_huggingface import HuggingFaceEmbeddings
+            
             config = RAGConfig()
-            self.rag_client = RAGClient(config)
-            self.rag_client._initialize()
+            vector_search_endpoint = os.environ.get("VECTOR_SEARCH_ENDPOINT", VECTOR_SEARCH_ENDPOINT)
+            
+            chain_config_local = {
+                "llm_model_serving_endpoint_name": chain_config["llm_model_serving_endpoint_name"],
+                "vector_search_endpoint_name": vector_search_endpoint,
+                "vector_search_index": config.vector_index_name,
+                "llm_prompt_template": chain_config["llm_prompt_template"],
+            }
+            
+            embedding_model = HuggingFaceEmbeddings(model_name=config.query_embedding_model)
+            
+            vector_store = DatabricksVectorSearch(
+                index_name=chain_config_local["vector_search_index"],
+                embedding=embedding_model,
+                text_column="chunked_text",
+                columns=["chunk_id", "chunked_text"]
+            )
+            
+            llm = ChatDatabricks(
+                endpoint=chain_config_local["llm_model_serving_endpoint_name"],
+                extra_params={"temperature": 0.1}
+            )
+            
+            retriever = vector_store.as_retriever(search_kwargs={"k": config.retriever_top_k})
+            prompt = ChatPromptTemplate.from_template(chain_config_local["llm_prompt_template"])
+            document_chain = create_stuff_documents_chain(llm, prompt)
+            self.rag_chain = create_retrieval_chain(retriever, document_chain)
+            
         except Exception as e:
             error_msg = f"Error loading context: {str(e)}\n{traceback.format_exc()}"
             print(error_msg)
@@ -123,8 +248,17 @@ class RAGModel(mlflow.pyfunc.PythonModel):
             }
         
         try:
-            result = self.rag_client.query_chat_completion(messages)
-            return result
+            result = self.rag_chain.invoke({"input": question})
+            answer = result.get("answer", "")
+            
+            return {
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": answer
+                    }
+                }]
+            }
         except Exception as e:
             return {
                 "choices": [{
@@ -135,26 +269,12 @@ class RAGModel(mlflow.pyfunc.PythonModel):
                 }]
             }
 
-# COMMAND ----------
-
-experiment_name = f"/Users/{w.current_user.me().user_name}/rag_chain_experiment"
-try:
-    experiment = mlflow.get_experiment_by_name(experiment_name)
-    if experiment is None:
-        mlflow.create_experiment(experiment_name)
-except Exception:
-    mlflow.create_experiment(experiment_name)
-
-mlflow.set_experiment(experiment_name)
-
 with mlflow.start_run():
     input_example = {
         "messages": [
             {"role": "user", "content": "通勤手当はいくらまで支給されますか？"}
         ]
     }
-    
-    env_vars = config.to_dict()
     
     import sys
     import os
@@ -166,7 +286,7 @@ with mlflow.start_run():
     try:
         import importlib.util
         
-        for module_name in ["rag_config", "rag_client"]:
+        for module_name in ["rag_config"]:
             try:
                 module = __import__(module_name)
                 module_file = module.__file__
@@ -182,8 +302,7 @@ with mlflow.start_run():
                 print(f"Warning: Could not copy {module_name}: {e}")
         
         code_paths = [
-            os.path.join(temp_dir, "rag_config.py"),
-            os.path.join(temp_dir, "rag_client.py")
+            os.path.join(temp_dir, "rag_config.py")
         ]
         
         for code_path in code_paths:
@@ -203,6 +322,7 @@ with mlflow.start_run():
             {
                 "pip": [
                     "langchain>=0.1.0",
+                    "langchain-core>=0.1.0",
                     "langchain-databricks>=0.1.0",
                     "databricks-langchain>=0.1.0",
                     "databricks-vectorsearch>=0.1.0",
@@ -228,17 +348,30 @@ with mlflow.start_run():
         registered_model_name="commuting_allowance_rag_model"
     )
     
-    mlflow.log_params(env_vars)
+    mlflow.log_params({
+        "llm_model_serving_endpoint_name": chain_config["llm_model_serving_endpoint_name"],
+        "vector_search_endpoint_name": chain_config["vector_search_endpoint_name"],
+        "vector_search_index": chain_config["vector_search_index"],
+        "query_embedding_model": config.query_embedding_model,
+        "retriever_top_k": config.retriever_top_k
+    })
+    
     mlflow.set_tag("task", "llm/v1/chat")
     mlflow.set_tag("embedding_model", config.query_embedding_model)
-    mlflow.set_tag("llm", config.llm_endpoint)
+    mlflow.set_tag("llm", chain_config["llm_model_serving_endpoint_name"])
     mlflow.set_tag("model_type", "chat_completion")
+    mlflow.set_tag("chain_type", "retrieval_chain")
     
     print(f"Model logged: {mlflow.active_run().info.run_id}")
 
 # COMMAND ----------
 
-endpoint_name = "commuting-allowance-rag-endpoint"
+# MAGIC %md
+# MAGIC ## MLflow Servingエンドポイント作成
+
+# COMMAND ----------
+
+endpoint_name = config.serving_endpoint_name
 model_name = "commuting_allowance_rag_model"
 
 try:
@@ -302,15 +435,16 @@ if endpoint_exists:
         else:
             raise
 else:
-    config = EndpointCoreConfigInput(
+    endpoint_config = EndpointCoreConfigInput(
         name=endpoint_name,
         served_models=[served_model]
     )
     w.serving_endpoints.create(
         name=endpoint_name,
-        config=config
+        config=endpoint_config
     )
     print(f"Endpoint created: {endpoint_name}")
 
 endpoint = w.serving_endpoints.get(endpoint_name)
 print(f"Status: {endpoint.state}")
+
