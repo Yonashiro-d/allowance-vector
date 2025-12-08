@@ -50,7 +50,12 @@ chain_config = {
     "llm_model_serving_endpoint_name": "databricks-llama-4-maverick",
     "vector_search_endpoint_name": VECTOR_SEARCH_ENDPOINT,
     "vector_search_index": config.vector_index_name,
-    "llm_prompt_template": """あなたは質問に答えるアシスタントです。取得したコンテキストの内容をもとに質問に答えてください。一部のコンテキストが無関係な場合、それを回答に利用しないでください。\nコンテキスト: {context}""",
+    "llm_prompt_template": """あなたは質問に答えるアシスタントです。取得したコンテキストの内容をもとに質問に答えてください。一部のコンテキストが無関係な場合、それを回答に利用しないでください。
+
+コンテキスト:
+{context}
+
+質問: {input}""",
 }
 
 print("Chain Config:")
@@ -172,28 +177,25 @@ with mlflow.start_run(run_name="commuting-allowance-rag-chain"):
     # チェーンを実行してトレースを記録
     test_result = rag_chain.invoke({"input": test_question})
     
+    # デバッグ情報を表示
+    context_docs = test_result.get("context", [])
+    print(f"\n=== Debug Information ===")
+    print(f"Retrieved context documents: {len(context_docs)}")
+    if context_docs:
+        print(f"First context document preview: {str(context_docs[0])[:200]}...")
+    print("=" * 30)
+    
     # 結果をログ
     mlflow.log_dict({
         "question": test_question,
         "answer": test_result.get("answer", ""),
-        "context_documents_count": len(test_result.get("context", []))
+        "context_documents_count": len(context_docs)
     }, "chain_test_result.json")
     
-    print("Chain executed successfully")
+    print("\nChain executed successfully")
     print(f"Answer: {test_result.get('answer', '')}")
     print(f"Run ID: {mlflow.active_run().info.run_id}")
     print("You can view the trace in MLflow UI under the 'Traces' tab")
 
 # COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## 注意事項
-# MAGIC
-# MAGIC このノートブックでは、LangChainチェーンを直接MLflowモデルとしてログすることはできません。
-# MAGIC 理由：
-# MAGIC - `VectorStoreRetriever`には`loader_fn`が必要
-# MAGIC - `ChatDatabricks`はカスタムコンポーネントのため直接保存できない
-# MAGIC
-# MAGIC 代わりに、チェーンを実行してMLflow Trace UIでトレースを確認できます。
-# MAGIC MLflow UIの「Traces」タブでチェーンの実行フローを確認してください。
 
