@@ -108,16 +108,6 @@ print("=" * 40)
 
 # COMMAND ----------
 
-def query_rag(question: str) -> Dict[str, Any]:
-    result = rag_chain.invoke({"input": question})
-    return {
-        "question": question,
-        "answer": result.get("answer", ""),
-        "context": result.get("context", [])
-    }
-
-# COMMAND ----------
-
 def setup_mlflow_experiment():
     # Databricksのユーザー名を取得
     try:
@@ -141,13 +131,11 @@ experiment_name = setup_mlflow_experiment()
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## MLflowモデル登録
+# MAGIC ## Build: MLflow Trace記録
 
 # COMMAND ----------
 
-# MLflow Trace UI用にチェーンを実行してトレースを記録
-test_question = "通勤手当はいくらまで支給されますか？"
-
+# MLflow Trace UI用にチェーンを実行してトレースを記録（Build）
 with mlflow.start_run(run_name="commuting-allowance-rag-chain"):
     # チェーンの設定とパラメータをログ
     mlflow.log_params({
@@ -171,7 +159,6 @@ with mlflow.start_run(run_name="commuting-allowance-rag-chain"):
     
     # MLflow Trace UI用にチェーンを実行（MLflow 2.14.0+では自動的にトレースが記録される）
     print("Executing RAG chain for MLflow Trace UI...")
-    print(f"Test question: {test_question}")
     
     # MLflow LangChain autologを有効化（MLflow 2.14.0+の場合）
     try:
@@ -180,33 +167,26 @@ with mlflow.start_run(run_name="commuting-allowance-rag-chain"):
         print("Note: mlflow.langchain.autolog() is not available in this MLflow version.")
         print("Traces will still be recorded when the chain is invoked.")
     
-    # チェーンを実行してトレースを記録
-    test_result = rag_chain.invoke({"input": test_question})
+    # チェーンを実行してトレースを記録（Buildの一部）
+    trace_question = "通勤手当はいくらまで支給されますか？"
+    trace_result = rag_chain.invoke({"input": trace_question})
     
-    # デバッグ情報を表示
-    context_docs = test_result.get("context", [])
-    print(f"\n=== Debug Information ===")
-    print(f"Retrieved context documents: {len(context_docs)}")
-    if context_docs:
-        print(f"First context document preview: {str(context_docs[0])[:200]}...")
-    print("=" * 30)
-    
-    # 結果をログ
+    # トレース結果をログ
+    context_docs = trace_result.get("context", [])
     mlflow.log_dict({
-        "question": test_question,
-        "answer": test_result.get("answer", ""),
+        "question": trace_question,
+        "answer": trace_result.get("answer", ""),
         "context_documents_count": len(context_docs)
-    }, "chain_test_result.json")
+    }, "chain_trace_result.json")
     
-    print("\nChain executed successfully")
-    print(f"Answer: {test_result.get('answer', '')}")
+    print("✅ MLflow Trace recorded successfully")
     print(f"Run ID: {mlflow.active_run().info.run_id}")
-    print("You can view the trace in MLflow UI under the 'Traces' tab")
+    print("💡 You can view the trace in MLflow UI under the 'Traces' tab")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## MLflow PyFuncモデル登録
+# MAGIC ## Deploy: MLflow PyFuncモデル登録とエンドポイント作成
 
 # COMMAND ----------
 
@@ -469,58 +449,24 @@ with mlflow.start_run(run_name="commuting-allowance-rag-model"):
 endpoint_name = config.serving_endpoint_name
 model_name = "commuting_allowance_rag_model"
 
-# モデル情報の取得とデバッグ
-print(f"\n=== Model Information ===")
-print(f"Endpoint name: {endpoint_name}")
-print(f"Model name: {model_name}")
-
+# モデル情報の取得
 try:
     from mlflow.tracking import MlflowClient
     client = MlflowClient()
-    
-    # モデルの存在確認
-    try:
-        registered_model = client.get_registered_model(model_name)
-        print(f"Registered model found: {registered_model.name}")
-    except Exception as e:
-        print(f"Warning: Could not get registered model: {e}")
-        print("Model may not be registered yet. Please check the model registration step.")
-    
-    # 最新バージョンの取得
-    try:
-        latest_versions = client.get_latest_versions(model_name, stages=["None"])
-        if latest_versions:
-            latest_version = latest_versions[0]
-            model_version = int(latest_version.version)
-            print(f"Latest model version: {model_version}")
-            print(f"Model version URI: {latest_version.source}")
-        else:
-            raise ValueError("No model versions found")
-    except Exception as e:
-        print(f"Error getting latest model version: {e}")
-        import traceback
-        traceback.print_exc()
-        model_version = 1
-        print(f"Using default model version: {model_version}")
-        
+    latest_versions = client.get_latest_versions(model_name, stages=["None"])
+    if latest_versions:
+        latest_version = latest_versions[0]
+        model_version = int(latest_version.version)
+    else:
+        raise ValueError("No model versions found")
 except Exception as e:
-    print(f"Error in model version retrieval: {e}")
-    import traceback
-    traceback.print_exc()
     model_version = 1
-    print(f"Using default model version: {model_version}")
 
 # エンドポイントの存在確認
-print(f"\n=== Endpoint Information ===")
 try:
     existing_endpoints = w.serving_endpoints.list()
     endpoint_exists = any(ep.name == endpoint_name for ep in existing_endpoints)
-    print(f"Existing endpoints: {[ep.name for ep in existing_endpoints]}")
-    print(f"Endpoint '{endpoint_name}' exists: {endpoint_exists}")
 except Exception as e:
-    print(f"Error listing endpoints: {e}")
-    import traceback
-    traceback.print_exc()
     endpoint_exists = False
 
 if endpoint_exists:
@@ -531,60 +477,31 @@ if endpoint_exists:
     
     endpoint = w.serving_endpoints.get(endpoint_name)
     state = endpoint.state
-    print(f"Existing endpoint state: {state}")
     
     # エンドポイントの更新が完了するまで待機
     while hasattr(state, 'config_update') and state.config_update == "IN_PROGRESS":
         if elapsed_time >= max_wait_time:
-            print(f"⚠️ Warning: Endpoint update timeout after {max_wait_time} seconds")
-            print("You may need to wait longer or check the endpoint status manually.")
             break
-        print(f"⏳ Waiting for endpoint update to complete... ({elapsed_time}s / {max_wait_time}s)")
         time.sleep(wait_interval)
         elapsed_time += wait_interval
         try:
             endpoint = w.serving_endpoints.get(endpoint_name)
             state = endpoint.state
-            print(f"Current state: {state}")
         except Exception as e:
-            print(f"Error checking endpoint state: {e}")
             break
-    
-    # 最終状態を確認
-    endpoint = w.serving_endpoints.get(endpoint_name)
-    state = endpoint.state
-    print(f"Final endpoint state: {state}")
-    
-    if hasattr(state, 'config_update') and state.config_update == "IN_PROGRESS":
-        print("⚠️ Endpoint is still being updated. Please wait and try again later.")
-        print("You can check the endpoint status in the Databricks UI.")
 
 # 環境変数の設定
-print(f"\n=== Environment Variables ===")
 environment_vars = {}
 if workspace_url:
     environment_vars["DATABRICKS_WORKSPACE_URL"] = workspace_url
     environment_vars["DATABRICKS_HOST"] = workspace_url
-    print(f"DATABRICKS_WORKSPACE_URL: {workspace_url}")
-    print(f"DATABRICKS_HOST: {workspace_url}")
-else:
-    print("Warning: workspace_url is None")
 
-# VECTOR_SEARCH_ENDPOINTも環境変数として設定
 environment_vars["VECTOR_SEARCH_ENDPOINT"] = VECTOR_SEARCH_ENDPOINT
-print(f"VECTOR_SEARCH_ENDPOINT: {VECTOR_SEARCH_ENDPOINT}")
 
 # Unity Catalog形式のentity_nameを準備（MLflow Deployments SDK用）
 entity_name = f"{config.catalog}.{config.schema}.{model_name}"
-print(f"\n=== Served Model Configuration ===")
-print(f"Entity name (Unity Catalog): {entity_name}")
-print(f"Model name: {model_name}")
-print(f"Model version: {model_version}")
-print(f"Workload size: Small")
-print(f"Scale to zero: True")
 
-# ServedModelInputの作成（WorkspaceClient SDKは標準形式のみサポート）
-# Unity Catalog形式はMLflow Deployments SDKで使用
+# ServedModelInputの作成
 served_model = ServedModelInput(
     name=f"{model_name}-{model_version}",
     model_name=model_name,
@@ -593,43 +510,29 @@ served_model = ServedModelInput(
     scale_to_zero_enabled=True,
     environment_vars=environment_vars if environment_vars else {}
 )
-print("Using standard format (model_name) for WorkspaceClient SDK")
 
 # エンドポイントの作成/更新
-print(f"\n=== Endpoint Creation/Update ===")
-
-# エンドポイントが更新中でないことを確認
 if endpoint_exists:
     endpoint = w.serving_endpoints.get(endpoint_name)
     state = endpoint.state
     
-    if hasattr(state, 'config_update') and state.config_update == "IN_PROGRESS":
-        print(f"⚠️ Endpoint is still being updated. Skipping update for now.")
-        print(f"Please wait for the current update to complete and run this cell again.")
-        print(f"Current endpoint state: {state}")
-    else:
+    # 更新中でないことを確認
+    is_updating = hasattr(state, 'config_update') and state.config_update == "IN_PROGRESS"
+    
+    if not is_updating:
         try:
-            print(f"Updating existing endpoint: {endpoint_name}")
-            print(f"Served model config: {served_model}")
             w.serving_endpoints.update_config(
                 name=endpoint_name,
                 served_models=[served_model]
             )
-            print(f"✅ Endpoint updated successfully: {endpoint_name}")
+            print(f"✅ Endpoint updated: {endpoint_name}")
         except Exception as e:
-            print(f"❌ Error updating endpoint: {e}")
-            import traceback
-            traceback.print_exc()
-            
-            if "currently being updated" in str(e) or "IN_PROGRESS" in str(e):
-                print(f"⚠️ Endpoint is still being updated. Please wait and try again later.")
-            else:
-                print("\nTrying alternative method: MLflow Deployments SDK...")
+            error_msg = str(e)
+            if "currently being updated" not in error_msg and "IN_PROGRESS" not in error_msg:
+                # MLflow Deployments SDKを試す
                 try:
                     import mlflow.deployments
                     deploy_client = mlflow.deployments.get_deploy_client("databricks")
-                    
-                    # MLflow Deployments SDKを使用（Unity Catalog形式を試す）
                     config_dict = {
                         "served_entities": [
                             {
@@ -649,22 +552,12 @@ if endpoint_exists:
                             ]
                         }
                     }
-                    
-                    deploy_client.update_endpoint(
-                        endpoint=endpoint_name,
-                        config=config_dict
-                    )
-                    print(f"✅ Endpoint updated using MLflow Deployments SDK: {endpoint_name}")
-                except Exception as e2:
-                    print(f"❌ Error with MLflow Deployments SDK: {e2}")
-                    import traceback
-                    traceback.print_exc()
-                    print("\n💡 Suggestion: Wait for the current update to complete and try again.")
+                    deploy_client.update_endpoint(endpoint=endpoint_name, config=config_dict)
+                    print(f"✅ Endpoint updated: {endpoint_name}")
+                except:
+                    raise
 else:
     try:
-        print(f"Creating new endpoint: {endpoint_name}")
-        print(f"Served model config: {served_model}")
-        
         endpoint_config = EndpointCoreConfigInput(
             name=endpoint_name,
             served_models=[served_model]
@@ -673,22 +566,16 @@ else:
             name=endpoint_name,
             config=endpoint_config
         )
-        print(f"✅ Endpoint created successfully: {endpoint_name}")
+        print(f"✅ Endpoint created: {endpoint_name}")
     except Exception as e:
-        print(f"❌ Error creating endpoint: {e}")
-        import traceback
-        traceback.print_exc()
-        
-        print("\nTrying alternative method: MLflow Deployments SDK...")
+        # MLflow Deployments SDKを試す
         try:
             import mlflow.deployments
             deploy_client = mlflow.deployments.get_deploy_client("databricks")
-            
-            # MLflow Deployments SDKを使用
             config_dict = {
                 "served_entities": [
                     {
-                        "entity_name": entity_name if 'entity_name' in locals() else model_name,
+                        "entity_name": entity_name,
                         "entity_version": str(model_version),
                         "workload_size": "Small",
                         "scale_to_zero_enabled": True,
@@ -704,30 +591,19 @@ else:
                     ]
                 }
             }
-            
-            deploy_client.create_endpoint(
-                endpoint=endpoint_name,
-                config=config_dict
-            )
-            print(f"✅ Endpoint created using MLflow Deployments SDK: {endpoint_name}")
-        except Exception as e2:
-            print(f"❌ Error with MLflow Deployments SDK: {e2}")
-            import traceback
-            traceback.print_exc()
+            deploy_client.create_endpoint(endpoint=endpoint_name, config=config_dict)
+            print(f"✅ Endpoint created: {endpoint_name}")
+        except:
             raise
 
 # エンドポイントの状態確認
-print(f"\n=== Endpoint Status ===")
 try:
     endpoint = w.serving_endpoints.get(endpoint_name)
-    print(f"Endpoint Status: {endpoint.state}")
+    print(f"✅ Endpoint Status: {endpoint.state}")
     if workspace_url:
-        print(f"Endpoint URL: https://{workspace_url}/serving-endpoints/{endpoint_name}/invocations")
-    print(f"\n✅ You can now use this endpoint in Databricks Playground!")
+        print(f"💡 Access: https://{workspace_url}/serving-endpoints/{endpoint_name}")
 except Exception as e:
     print(f"❌ Error getting endpoint status: {e}")
-    import traceback
-    traceback.print_exc()
 
 # COMMAND ----------
 
