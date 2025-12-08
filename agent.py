@@ -91,3 +91,8 @@ def build_rag_chain():
 # Initialize agent
 AGENT = build_rag_chain()
 
+# Set the agent as the MLflow model
+# This is required when using mlflow.pyfunc.log_model with python_model="agent.py"
+import mlflow
+mlflow.models.set_model(AGENT)
+
