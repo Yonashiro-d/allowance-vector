@@ -84,36 +84,25 @@ class RAGAgent(PythonModel):
             return {"input": content}
         return {"input": ""}
     
-    def predict(self, context: PythonModelContext, model_input: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Predict using the RAG chain
-        
-        Args:
-            context: MLflow model context
-            model_input: List of input dictionaries, each containing "messages" key
-            
-        Returns:
-            List of output dictionaries, each containing "messages" key
-        """
+    def predict(self, context: PythonModelContext, model_input: Dict[str, Any]) -> Dict[str, Any]:
         if self.rag_chain is None:
             self.load_context(context)
         
-        # Process each input in the batch
-        results = []
-        for input_item in model_input:
-            # Invoke the RAG chain
-            result = self.rag_chain.invoke(input_item)
-            
-            # Return the answer in a format compatible with agent framework
-            results.append({
-                "messages": [
-                    {
-                        "role": "assistant",
-                        "content": result.get("answer", "")
-                    }
-                ]
-            })
+        # Invoke the RAG chain
+        result = self.rag_chain.invoke(model_input)
         
-        return results
+        # Return the answer in a format compatible with agent framework
+        # Keep the original messages and append the assistant's response
+        response_messages = model_input.get("messages", []) + [
+            {
+                "role": "assistant",
+                "content": result.get("answer", "")
+            }
+        ]
+        
+        return {
+            "messages": response_messages
+        }
 
 
 # Initialize and set the agent
