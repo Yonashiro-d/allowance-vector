@@ -286,6 +286,7 @@ print(f"   Version: {uc_registered_model_info.version}")
 
 # エージェントをモデルサービングにデプロイ
 from databricks import agents
+from databricks.sdk import WorkspaceClient
 
 deployment_info = agents.deploy(
     model_name=UC_MODEL_NAME,
@@ -294,5 +295,23 @@ deployment_info = agents.deploy(
 
 print(f"✅ Agent deployed successfully!")
 print(f"   Deployment info: {deployment_info}")
-print(f"💡 You can now use the agent in Databricks Playground!")
-print(f"💡 Review App and API endpoint are available")
+
+# エンドポイント名とURLを取得
+w = WorkspaceClient()
+# エンドポイント名は通常 agents_{model_name} の形式（ドットがハイフンに置き換えられる）
+endpoint_name = deployment_info.endpoint_name if hasattr(deployment_info, 'endpoint_name') else f"agents_{UC_MODEL_NAME.replace('.', '-')}"
+
+try:
+    endpoint = w.serving_endpoints.get(endpoint_name)
+    endpoint_url = f"{w.config.host}/serving-endpoints/{endpoint_name}/invocations"
+    
+    print(f"\n=== Endpoint Information ===")
+    print(f"Endpoint Name: {endpoint_name}")
+    print(f"Endpoint URL: {endpoint_url}")
+    print(f"Endpoint State: {endpoint.state}")
+    print(f"💡 You can now use the agent in Databricks Playground!")
+    print(f"💡 Review App and API endpoint are available")
+except Exception as e:
+    print(f"⚠️ Could not retrieve endpoint information: {e}")
+    print(f"   Endpoint name: {endpoint_name}")
+    print(f"💡 Please check the Databricks UI for the endpoint details")
