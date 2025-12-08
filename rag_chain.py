@@ -198,22 +198,30 @@ resources = [
 ]
 
 # 入力例と出力例の定義（シグネチャ推論用）
+from mlflow.types.llm import ChatCompletionResponse, ChatChoice, ChatMessage
+
 input_example = {
     "messages": [
         {"role": "user", "content": "通勤手当はいくらまで支給されますか？"}
     ]
 }
 
-output_example = {
-    "messages": [
-        {"role": "user", "content": "通勤手当はいくらまで支給されますか？"},
-        {"role": "assistant", "content": "通勤手当は月額15,000円まで支給されます。"}
+# ChatCompletionResponse形式の出力例
+output_example = ChatCompletionResponse(
+    choices=[
+        ChatChoice(
+            index=0,
+            message=ChatMessage(
+                role="assistant",
+                content="通勤手当は月額15,000円まで支給されます。"
+            )
+        )
     ]
-}
+)
 
 # シグネチャを推論
 from mlflow.models import infer_signature
-signature = infer_signature(input_example, output_example)
+signature = infer_signature(input_example, output_example.to_dict())
 
 with mlflow.start_run(run_name="commuting-allowance-rag-agent"):
     # PyFuncモデルとしてログ（agent.pyファイルを指定）

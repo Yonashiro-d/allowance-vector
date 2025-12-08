@@ -8,6 +8,7 @@ about commuting allowance policies.
 from typing import Any, Dict, List
 import mlflow
 from mlflow.pyfunc import PythonModel, PythonModelContext
+from mlflow.types.llm import ChatCompletionResponse, ChatChoice, ChatMessage
 from langchain.chains import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
@@ -85,24 +86,28 @@ class RAGAgent(PythonModel):
         return {"input": ""}
     
     def predict(self, context: PythonModelContext, model_input: Dict[str, Any]) -> Dict[str, Any]:
+        """Predict using the RAG chain and return ChatCompletionResponse format"""
         if self.rag_chain is None:
             self.load_context(context)
         
         # Invoke the RAG chain
         result = self.rag_chain.invoke(model_input)
         
-        # Return the answer in a format compatible with agent framework
-        # Keep the original messages and append the assistant's response
-        response_messages = model_input.get("messages", []) + [
-            {
-                "role": "assistant",
-                "content": result.get("answer", "")
-            }
-        ]
+        # Create ChatCompletionResponse format
+        response_message = ChatMessage(
+            role="assistant",
+            content=result.get("answer", "")
+        )
         
-        return {
-            "messages": response_messages
-        }
+        choice = ChatChoice(
+            index=0,
+            message=response_message
+        )
+        
+        response = ChatCompletionResponse(choices=[choice])
+        
+        # Convert to dictionary for MLflow
+        return response.to_dict()
 
 
 # Initialize and set the agent
