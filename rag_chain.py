@@ -179,12 +179,6 @@ with mlflow.start_run(run_name="commuting-allowance-rag-chain"):
     print("💡 You can view the trace in MLflow UI under the 'Traces' tab")
 
 # COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Deploy: エージェントをモデルサービングにデプロイ
-
-# COMMAND ----------
-
 # Unity Catalogに接続
 mlflow.set_registry_uri("databricks-uc")
 
@@ -194,31 +188,34 @@ UC_MODEL_NAME = f"{config.catalog}.{config.schema}.commuting_allowance_rag_agent
 # COMMAND ----------
 
 # エージェントをMLflowにログ
-# agent.pyからAGENTをインポートして使用
-from agent import AGENT
+# mlflow.pyfunc.log_modelを使用
 from mlflow.models.resources import DatabricksServingEndpoint
 from pkg_resources import get_distribution
 
-# 入力例の定義（エージェントフレームワーク形式）
-input_example = {
-    "messages": [
-        {"role": "user", "content": "通勤手当はいくらまで支給されますか？"}
-    ]
-}
-
-# loader_fn: モデルロード時にRAGチェーンを再構築する関数
-def loader_fn(path):
-    """モデルロード時にRAGチェーンを再構築"""
-    from agent import build_rag_chain
-    return build_rag_chain()
+# リソース定義（LLMエンドポイント）
+resources = [
+    DatabricksServingEndpoint(endpoint_name=chain_config["llm_model_serving_endpoint_name"])
+]
 
 with mlflow.start_run(run_name="commuting-allowance-rag-agent"):
-    # LangChainチェーンをMLflowにログ
-    logged_model_info = mlflow.langchain.log_model(
-        lc_model=AGENT,
+    # PyFuncモデルとしてログ（agent.pyファイルを指定）
+    # これにより、MLflowはagent.pyを読み込み、AGENT変数を使用
+    logged_model_info = mlflow.pyfunc.log_model(
         artifact_path="agent",
-        input_example=input_example,
-        loader_fn=loader_fn,
+        python_model="agent.py",
+        pip_requirements=[
+            "langchain",
+            "langchain-core",
+            "langchain-databricks",
+            "databricks-langchain",
+            "databricks-vectorsearch",
+            "langchain-huggingface",
+            "sentence-transformers",
+            "sentencepiece",
+            "mlflow",
+            "databricks-sdk",
+        ],
+        resources=resources,
         registered_model_name=UC_MODEL_NAME
     )
     
