@@ -103,28 +103,6 @@ print("=" * 40)
 
 # COMMAND ----------
 
-def setup_mlflow_experiment():
-    # Databricksのユーザー名を取得
-    try:
-        user_name = dbutils.notebook.entry_point.getDbutils().notebook().getContext().userName().get()
-    except:
-        import os
-        user_name = os.environ.get("USER", "default_user")
-    
-    experiment_name = f"/Users/{user_name}/rag_chain_experiment"
-    try:
-        experiment = mlflow.get_experiment_by_name(experiment_name)
-        if experiment is None:
-            mlflow.create_experiment(experiment_name)
-    except Exception:
-        mlflow.create_experiment(experiment_name)
-    mlflow.set_experiment(experiment_name)
-    return experiment_name
-
-experiment_name = setup_mlflow_experiment()
-
-# COMMAND ----------
-
 # MAGIC %md
 # MAGIC ## Build: MLflow Trace記録
 

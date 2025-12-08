@@ -29,12 +29,19 @@ class RAGChatAgent(ChatAgent):
     
     def __init__(self):
         """Initialize the RAG Agent"""
-        self.config = RAGConfig()
+        super().__init__()
+        self.config = None
         self.rag_chain = None
-        self._initialize_rag_chain()
     
     def _initialize_rag_chain(self):
-        """Initialize the RAG chain"""
+        """Initialize the RAG chain (lazy initialization)"""
+        if self.rag_chain is not None:
+            return
+        
+        # Initialize config if not already done
+        if self.config is None:
+            self.config = RAGConfig()
+        
         # Initialize embedding model
         embedding_model = HuggingFaceEmbeddings(model_name=self.config.query_embedding_model)
         
@@ -92,17 +99,35 @@ class RAGChatAgent(ChatAgent):
         Returns:
             ChatAgentResponse with the answer
         """
+        # Lazy initialization of RAG chain
+        self._initialize_rag_chain()
+        
         # Extract the last user message
         user_message = self._extract_user_message(messages)
         
+        if not user_message:
+            # Return empty response if no user message found
+            return ChatAgentResponse(messages=[
+                ChatAgentMessage(
+                    id=str(uuid.uuid4()),
+                    role="assistant",
+                    content="質問を入力してください。"
+                )
+            ])
+        
         # Invoke the RAG chain
-        result = self.rag_chain.invoke({"input": user_message})
+        try:
+            result = self.rag_chain.invoke({"input": user_message})
+            answer = result.get("answer", "")
+        except Exception as e:
+            # Return error message if RAG chain fails
+            answer = f"エラーが発生しました: {str(e)}"
         
         # Create ChatAgentMessage with the answer
         response_message = ChatAgentMessage(
             id=str(uuid.uuid4()),
             role="assistant",
-            content=result.get("answer", "")
+            content=answer
         )
         
         return ChatAgentResponse(messages=[response_message])
@@ -123,14 +148,32 @@ class RAGChatAgent(ChatAgent):
         Yields:
             ChatAgentChunk objects
         """
+        # Lazy initialization of RAG chain
+        self._initialize_rag_chain()
+        
         # Extract the last user message
         user_message = self._extract_user_message(messages)
         
+        if not user_message:
+            # Return empty response if no user message found
+            yield ChatAgentChunk(
+                delta=ChatAgentMessage(
+                    id=str(uuid.uuid4()),
+                    role="assistant",
+                    content="質問を入力してください。"
+                )
+            )
+            return
+        
         # Invoke the RAG chain
-        result = self.rag_chain.invoke({"input": user_message})
+        try:
+            result = self.rag_chain.invoke({"input": user_message})
+            answer = result.get("answer", "")
+        except Exception as e:
+            # Return error message if RAG chain fails
+            answer = f"エラーが発生しました: {str(e)}"
         
         # Stream the answer word by word (simple implementation)
-        answer = result.get("answer", "")
         message_id = str(uuid.uuid4())
         
         # Split answer into chunks (by sentences for better streaming)
@@ -150,6 +193,16 @@ class RAGChatAgent(ChatAgent):
                         )
                     )
                     current_chunk = ""
+        
+        # Yield remaining chunk if any
+        if current_chunk.strip():
+            yield ChatAgentChunk(
+                delta=ChatAgentMessage(
+                    id=message_id,
+                    role="assistant",
+                    content=current_chunk
+                )
+            )
 
 
 # Create the agent object, and specify it as the agent object to use when
