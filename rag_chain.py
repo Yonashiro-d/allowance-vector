@@ -193,173 +193,81 @@ UC_MODEL_NAME = f"{config.catalog}.{config.schema}.commuting_allowance_rag_agent
 
 # COMMAND ----------
 
-# エージェント（RAGチェーン）をMLflowにログ
+# エージェントをMLflowにログ
+# agent.pyからAGENTをインポートして使用
+from agent import AGENT
+from mlflow.models.resources import DatabricksServingEndpoint
+from pkg_resources import get_distribution
+
+# 入力例の定義（エージェントフレームワーク形式）
+input_example = {
+    "messages": [
+        {"role": "user", "content": "通勤手当はいくらまで支給されますか？"}
+    ]
+}
+
+# loader_fn: モデルロード時にRAGチェーンを再構築する関数
+def loader_fn(path):
+    """モデルロード時にRAGチェーンを再構築"""
+    from agent import build_rag_chain
+    return build_rag_chain()
+
 with mlflow.start_run(run_name="commuting-allowance-rag-agent"):
-    # メッセージ形式をRAGチェーンの入力形式に変換するラッパー
-    from langchain_core.runnables import RunnableLambda
-    from langchain_core.messages import HumanMessage
-    
-    def messages_to_rag_input(messages):
-        """メッセージ形式をRAGチェーンの入力形式に変換"""
-        if isinstance(messages, dict) and "messages" in messages:
-            messages = messages["messages"]
-        elif isinstance(messages, list):
-            pass
-        else:
-            raise ValueError(f"Unexpected input format: {type(messages)}")
-        
-        # 最後のユーザーメッセージを取得
-        last_message = messages[-1] if messages else None
-        if last_message:
-            if isinstance(last_message, dict):
-                content = last_message.get("content", "")
-            elif hasattr(last_message, "content"):
-                content = last_message.content
-            else:
-                content = str(last_message)
-            return {"input": content}
-        return {"input": ""}
-    
-    # loader_fn: モデルロード時にRAGチェーンを再構築する関数
-    # クロージャーとしてchain_config、config、messages_to_rag_inputをキャプチャ
-    def create_loader_fn(chain_config, config, messages_to_rag_input):
-        """loader_fnを生成するファクトリー関数"""
-        def loader_fn(path):
-            """モデルロード時にRAGチェーンを再構築"""
-            from langchain.chains import create_retrieval_chain
-            from langchain.chains.combine_documents import create_stuff_documents_chain
-            from langchain_core.prompts import ChatPromptTemplate
-            from langchain_core.runnables import RunnableLambda
-            from databricks_langchain import ChatDatabricks, DatabricksVectorSearch
-            from langchain_huggingface import HuggingFaceEmbeddings
-            
-            # Embeddingモデルを再構築
-            embedding_model = HuggingFaceEmbeddings(model_name=config.query_embedding_model)
-            
-            # VectorStoreを再構築
-            vector_store = DatabricksVectorSearch(
-                index_name=chain_config["vector_search_index"],
-                embedding=embedding_model,
-                text_column="chunked_text",
-                columns=["chunk_id", "chunked_text"]
-            )
-            
-            # LLMを再構築
-            llm = ChatDatabricks(
-                endpoint=chain_config["llm_model_serving_endpoint_name"],
-                extra_params={"temperature": 0.1}
-            )
-            
-            # Retrieverを再構築
-            retriever = vector_store.as_retriever(search_kwargs={"k": config.retriever_top_k})
-            
-            # Promptを再構築
-            prompt = ChatPromptTemplate.from_template(chain_config["llm_prompt_template"])
-            
-            # Document ChainとRAG Chainを再構築
-            document_chain = create_stuff_documents_chain(llm, prompt)
-            rag_chain = create_retrieval_chain(retriever, document_chain)
-            
-            # メッセージ形式への変換ラッパーと組み合わせ
-            agent_chain = RunnableLambda(messages_to_rag_input) | rag_chain
-            
-            return agent_chain
-        return loader_fn
-    
-    # loader_fnを生成
-    loader_fn = create_loader_fn(chain_config, config, messages_to_rag_input)
-    
-    # ラッパーでRAGチェーンをラップ
-    agent_chain = RunnableLambda(messages_to_rag_input) | rag_chain
-    
-    # 入力例の定義（エージェントフレームワーク形式）
-    input_example = {
-        "messages": [
-            {"role": "user", "content": "通勤手当はいくらまで支給されますか？"}
-        ]
-    }
-    
     # LangChainチェーンをMLflowにログ
-    try:
-        logged_model_info = mlflow.langchain.log_model(
-            lc_model=agent_chain,
-            artifact_path="agent",
-            input_example=input_example,
-            loader_fn=loader_fn,
-            registered_model_name=UC_MODEL_NAME
-        )
-        
-        print(f"✅ Agent logged: {logged_model_info.model_uri}")
-        
-        # パラメータとタグをログ
-        mlflow.log_params({
-            "llm_model_serving_endpoint_name": chain_config["llm_model_serving_endpoint_name"],
-            "vector_search_endpoint_name": chain_config["vector_search_endpoint_name"],
-            "vector_search_index": chain_config["vector_search_index"],
-            "query_embedding_model": config.query_embedding_model,
-            "retriever_top_k": config.retriever_top_k,
-            "catalog": config.catalog,
-            "schema": config.schema
-        })
-        
-        mlflow.set_tag("task", "llm/v1/chat")
-        mlflow.set_tag("embedding_model", config.query_embedding_model)
-        mlflow.set_tag("llm", chain_config["llm_model_serving_endpoint_name"])
-        mlflow.set_tag("model_type", "databricks-agent")
-        mlflow.set_tag("chain_type", "retrieval_chain")
-        
-        print(f"Run ID: {mlflow.active_run().info.run_id}")
-        
-    except Exception as e:
-        print(f"❌ Error logging agent: {e}")
-        import traceback
-        traceback.print_exc()
-        raise
+    logged_model_info = mlflow.langchain.log_model(
+        lc_model=AGENT,
+        artifact_path="agent",
+        input_example=input_example,
+        loader_fn=loader_fn,
+        registered_model_name=UC_MODEL_NAME
+    )
+    
+    print(f"✅ Agent logged: {logged_model_info.model_uri}")
+    
+    # パラメータとタグをログ
+    mlflow.log_params({
+        "llm_model_serving_endpoint_name": chain_config["llm_model_serving_endpoint_name"],
+        "vector_search_endpoint_name": chain_config["vector_search_endpoint_name"],
+        "vector_search_index": chain_config["vector_search_index"],
+        "query_embedding_model": config.query_embedding_model,
+        "retriever_top_k": config.retriever_top_k,
+        "catalog": config.catalog,
+        "schema": config.schema
+    })
+    
+    mlflow.set_tag("task", "llm/v1/chat")
+    mlflow.set_tag("embedding_model", config.query_embedding_model)
+    mlflow.set_tag("llm", chain_config["llm_model_serving_endpoint_name"])
+    mlflow.set_tag("model_type", "databricks-agent")
+    mlflow.set_tag("chain_type", "retrieval_chain")
+    
+    print(f"Run ID: {mlflow.active_run().info.run_id}")
 
 # COMMAND ----------
 
 # Unity Catalogにモデルを登録
-try:
-    from mlflow.tracking import MlflowClient
-    client = MlflowClient()
-    
-    # モデルをUnity Catalogに登録
-    uc_registered_model_info = mlflow.register_model(
-        model_uri=logged_model_info.model_uri,
-        name=UC_MODEL_NAME
-    )
-    
-    print(f"✅ Model registered to Unity Catalog: {UC_MODEL_NAME}")
-    print(f"   Version: {uc_registered_model_info.version}")
-    
-except Exception as e:
-    print(f"❌ Error registering model: {e}")
-    import traceback
-    traceback.print_exc()
-    raise
+uc_registered_model_info = mlflow.register_model(
+    model_uri=logged_model_info.model_uri,
+    name=UC_MODEL_NAME
+)
+
+print(f"✅ Model registered to Unity Catalog: {UC_MODEL_NAME}")
+print(f"   Version: {uc_registered_model_info.version}")
 
 # COMMAND ----------
 
 # エージェントをモデルサービングにデプロイ
-try:
-    from databricks import agents
-    
-    # エージェントをデプロイ（Review AppとAPIエンドポイントを作成）
-    deployment_info = agents.deploy(
-        model_name=UC_MODEL_NAME,
-        model_version=uc_registered_model_info.version
-    )
-    
-    print(f"✅ Agent deployed successfully!")
-    print(f"   Deployment info: {deployment_info}")
-    print(f"💡 You can now use the agent in Databricks Playground!")
-    print(f"💡 Review App and API endpoint are available")
-    
-except Exception as e:
-    print(f"❌ Error deploying agent: {e}")
-    import traceback
-    traceback.print_exc()
-    raise
+from databricks import agents
+
+deployment_info = agents.deploy(
+    model_name=UC_MODEL_NAME,
+    model_version=uc_registered_model_info.version
+)
+
+print(f"✅ Agent deployed successfully!")
+print(f"   Deployment info: {deployment_info}")
+print(f"💡 You can now use the agent in Databricks Playground!")
+print(f"💡 Review App and API endpoint are available")
 
 # COMMAND ----------
 
