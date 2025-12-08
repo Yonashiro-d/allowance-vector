@@ -206,23 +206,25 @@ input_example = {
     ]
 }
 
-# ChatCompletionResponse形式の出力例（choicesフィールドのみ）
-# エージェントフレームワークはchoicesフィールドのみを認識するため、余分なフィールドを除外
-output_example = {
-    "choices": [
-        {
-            "index": 0,
-            "message": {
-                "role": "assistant",
-                "content": "通勤手当は月額15,000円まで支給されます。"
-            }
-        }
-    ]
-}
+output_example_obj = ChatCompletionResponse(
+    id="test-response-id",
+    choices=[
+        ChatChoice(
+            index=0,
+            message=ChatMessage(
+                role="assistant",
+                content="通勤手当は月額15,000円まで支給されます。"
+            ),
+            finish_reason="stop"
+        )
+    ],
+    created=1234567890,
+    model="rag-agent"
+)
 
 # シグネチャを推論
 from mlflow.models import infer_signature
-signature = infer_signature(input_example, output_example)
+signature = infer_signature(input_example, output_example_obj.to_dict())
 
 with mlflow.start_run(run_name="commuting-allowance-rag-agent"):
     # PyFuncモデルとしてログ（agent.pyファイルを指定）

@@ -130,13 +130,18 @@ class RAGAgent(PythonModel):
                 message=response_message
             )
             
-            response = ChatCompletionResponse(choices=[choice])
+            # Create ChatCompletionResponse with required fields for agent framework compatibility
+            response = ChatCompletionResponse(
+                id=f"rag-response-{len(results)}",
+                choices=[choice],
+                created=int(__import__("time").time()),
+                model="rag-agent"
+            )
             
             # Convert to dictionary for MLflow
-            # Only include 'choices' field to match agent framework expectations
-            # Exclude extra fields like 'created' that are not recognized by agent framework
+            # Use full ChatCompletionResponse format for agent framework compatibility
             response_dict = response.to_dict()
-            results.append({"choices": response_dict.get("choices", [])})
+            results.append(response_dict)
         
         return results
 
