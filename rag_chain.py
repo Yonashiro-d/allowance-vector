@@ -19,7 +19,6 @@ from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.serving import EndpointCoreConfigInput, ServedModelInput
 from pyspark.sql import SparkSession
 import mlflow
-import mlflow.pyfunc
 
 spark = SparkSession.builder.getOrCreate()
 w = WorkspaceClient()
@@ -132,128 +131,6 @@ experiment_name = setup_mlflow_experiment()
 
 # COMMAND ----------
 
-class RAGModel(mlflow.pyfunc.PythonModel):
-    def __init__(self):
-        self.rag_chain = None
-    
-    def load_context(self, context):
-        import traceback
-        import os
-        
-        try:
-            if not os.environ.get("DATABRICKS_HOST"):
-                workspace_url_env = os.environ.get("DATABRICKS_WORKSPACE_URL")
-                if workspace_url_env:
-                    os.environ["DATABRICKS_HOST"] = workspace_url_env
-            
-            if not os.environ.get("DATABRICKS_TOKEN"):
-                api_token = os.environ.get("DATABRICKS_API_TOKEN")
-                if api_token:
-                    os.environ["DATABRICKS_TOKEN"] = api_token
-            
-            from rag_config import RAGConfig
-            from langchain.chains import create_retrieval_chain
-            from langchain.chains.combine_documents import create_stuff_documents_chain
-            from langchain_core.prompts import ChatPromptTemplate
-            from databricks_langchain import ChatDatabricks, DatabricksVectorSearch
-            from langchain_huggingface import HuggingFaceEmbeddings
-            
-            config = RAGConfig()
-            vector_search_endpoint = os.environ.get("VECTOR_SEARCH_ENDPOINT", VECTOR_SEARCH_ENDPOINT)
-            
-            chain_config_local = {
-                "llm_model_serving_endpoint_name": chain_config["llm_model_serving_endpoint_name"],
-                "vector_search_endpoint_name": vector_search_endpoint,
-                "vector_search_index": config.vector_index_name,
-                "llm_prompt_template": chain_config["llm_prompt_template"],
-            }
-            
-            embedding_model = HuggingFaceEmbeddings(model_name=config.query_embedding_model)
-            
-            vector_store = DatabricksVectorSearch(
-                index_name=chain_config_local["vector_search_index"],
-                embedding=embedding_model,
-                text_column="chunked_text",
-                columns=["chunk_id", "chunked_text"]
-            )
-            
-            llm = ChatDatabricks(
-                endpoint=chain_config_local["llm_model_serving_endpoint_name"],
-                extra_params={"temperature": 0.1}
-            )
-            
-            retriever = vector_store.as_retriever(search_kwargs={"k": config.retriever_top_k})
-            prompt = ChatPromptTemplate.from_template(chain_config_local["llm_prompt_template"])
-            document_chain = create_stuff_documents_chain(llm, prompt)
-            self.rag_chain = create_retrieval_chain(retriever, document_chain)
-            
-        except Exception as e:
-            error_msg = f"Error loading context: {str(e)}\n{traceback.format_exc()}"
-            print(error_msg)
-            raise RuntimeError(error_msg) from e
-    
-    def predict(self, context, model_input):
-        import json
-        
-        if isinstance(model_input, str):
-            try:
-                model_input = json.loads(model_input)
-            except:
-                model_input = {"messages": [{"role": "user", "content": model_input}]}
-        elif hasattr(model_input, 'iloc'):
-            model_input = model_input.to_dict('records')[0] if len(model_input) > 0 else {}
-        elif isinstance(model_input, list) and len(model_input) > 0:
-            model_input = model_input[0]
-        
-        if not isinstance(model_input, dict):
-            model_input = {"messages": [{"role": "user", "content": str(model_input)}]}
-        
-        messages = model_input.get("messages", [])
-        if not messages:
-            return {
-                "choices": [{
-                    "message": {
-                        "role": "assistant",
-                        "content": "メッセージが見つかりませんでした。"
-                    }
-                }]
-            }
-        
-        last_message = messages[-1]
-        question = last_message.get("content", "") if isinstance(last_message, dict) else str(last_message)
-        
-        if not question:
-            return {
-                "choices": [{
-                    "message": {
-                        "role": "assistant",
-                        "content": "質問内容が空です。"
-                    }
-                }]
-            }
-        
-        try:
-            result = self.rag_chain.invoke({"input": question})
-            answer = result.get("answer", "")
-            
-            return {
-                "choices": [{
-                    "message": {
-                        "role": "assistant",
-                        "content": answer
-                    }
-                }]
-            }
-        except Exception as e:
-            return {
-                "choices": [{
-                    "message": {
-                        "role": "assistant",
-                        "content": f"エラーが発生しました: {str(e)}"
-                    }
-                }]
-            }
-
 # 入力例の定義
 input_example = {
     "messages": [
@@ -263,102 +140,15 @@ input_example = {
 
 # LangChainチェーンをMLflowにログ
 with mlflow.start_run(run_name="commuting-allowance-rag-chain"):
-    try:
-        logged_chain_info = mlflow.langchain.log_model(
-            lc_model=rag_chain,  # チェーンオブジェクトを直接渡す
-            model_config=chain_config,  # チェーン設定
-            artifact_path="chain",  # MLflowで必要なパス
-            input_example=input_example,  # 入力スキーマを保存
-        )
-        
-        print(f"LangChain model logged: {logged_chain_info.model_uri}")
-        
-        # チェーンをロードしてテスト実行（MLflow Trace UIで確認可能）
-        print("Testing the chain locally to see the MLflow Trace...")
-        loaded_chain = mlflow.langchain.load_model(logged_chain_info.model_uri)
-        test_result = loaded_chain.invoke(input_example)
-        
-        mlflow.log_dict(test_result, "chain_test_result.json")
-        print("Chain test executed successfully")
-        
-    except Exception as e:
-        print(f"Warning: Could not log LangChain model directly: {e}")
-        print("Falling back to PyFunc model logging...")
-        logged_chain_info = None
-
-# PyFuncモデルとしてもログ（Servingエンドポイント用）
-with mlflow.start_run(run_name="commuting-allowance-rag-model"):
-    import sys
-    import os
-    import tempfile
-    import shutil
-    
-    temp_dir = tempfile.mkdtemp()
-    
-    try:
-        import importlib.util
-        
-        for module_name in ["rag_config"]:
-            try:
-                module = __import__(module_name)
-                module_file = module.__file__
-                
-                if module_file:
-                    if module_file.endswith('.pyc'):
-                        module_file = module_file[:-1]
-                    
-                    temp_file = os.path.join(temp_dir, f"{module_name}.py")
-                    shutil.copy2(module_file, temp_file)
-                    print(f"Copied {module_file} to {temp_file}")
-            except Exception as e:
-                print(f"Warning: Could not copy {module_name}: {e}")
-        
-        code_paths = [
-            os.path.join(temp_dir, "rag_config.py")
-        ]
-        
-        for code_path in code_paths:
-            if not os.path.exists(code_path):
-                raise FileNotFoundError(f"File not found: {code_path}")
-        
-        print(f"Using code_paths: {code_paths}")
-    except Exception as e:
-        shutil.rmtree(temp_dir, ignore_errors=True)
-        raise
-    
-    conda_env = {
-        "channels": ["defaults", "conda-forge"],
-        "dependencies": [
-            f"python={sys.version.split()[0]}",
-            "pip",
-            {
-                "pip": [
-                    "langchain>=0.1.0",
-                    "langchain-core>=0.1.0",
-                    "langchain-databricks>=0.1.0",
-                    "databricks-langchain>=0.1.0",
-                    "databricks-vectorsearch>=0.1.0",
-                    "databricks-sdk>=0.1.0",
-                    "databricks-feature-lookup==1.9",
-                    "mlflow>=2.0.0",
-                    "pandas>=1.5.0",
-                    "langchain-huggingface>=0.0.1",
-                    "sentence-transformers>=2.0.0",
-                    "sentencepiece>=0.1.0"
-                ]
-            }
-        ]
-    }
-    
-    logged_pyfunc_info = mlflow.pyfunc.log_model(
-        artifact_path="rag_model",
-        python_model=RAGModel(),
-        signature=None,
-        input_example=input_example,
-        conda_env=conda_env,
-        code_paths=code_paths,
-        registered_model_name="commuting_allowance_rag_model"
+    logged_chain_info = mlflow.langchain.log_model(
+        lc_model=rag_chain,  # チェーンオブジェクトを直接渡す
+        model_config=chain_config,  # チェーン設定
+        artifact_path="chain",  # MLflowで必要なパス
+        input_example=input_example,  # 入力スキーマを保存
+        registered_model_name="commuting_allowance_rag_chain"
     )
+    
+    print(f"LangChain model logged: {logged_chain_info.model_uri}")
     
     mlflow.log_params({
         "llm_model_serving_endpoint_name": chain_config["llm_model_serving_endpoint_name"],
@@ -374,7 +164,13 @@ with mlflow.start_run(run_name="commuting-allowance-rag-model"):
     mlflow.set_tag("model_type", "chat_completion")
     mlflow.set_tag("chain_type", "retrieval_chain")
     
-    print(f"PyFunc model logged: {logged_pyfunc_info.model_uri}")
+    # チェーンをロードしてテスト実行（MLflow Trace UIで確認可能）
+    print("Testing the chain locally to see the MLflow Trace...")
+    loaded_chain = mlflow.langchain.load_model(logged_chain_info.model_uri)
+    test_result = loaded_chain.invoke(input_example)
+    
+    mlflow.log_dict(test_result, "chain_test_result.json")
+    print("Chain test executed successfully")
     print(f"Run ID: {mlflow.active_run().info.run_id}")
 
 # COMMAND ----------
@@ -385,7 +181,7 @@ with mlflow.start_run(run_name="commuting-allowance-rag-model"):
 # COMMAND ----------
 
 endpoint_name = config.serving_endpoint_name
-model_name = "commuting_allowance_rag_model"
+model_name = "commuting_allowance_rag_chain"
 
 try:
     from mlflow.tracking import MlflowClient
