@@ -256,7 +256,8 @@ from databricks import agents
 
 deployment_info = agents.deploy(
     model_name=UC_MODEL_NAME,
-    model_version=uc_registered_model_info.version
+    model_version=uc_registered_model_info.version,
+    endpoint_name="commuting-allowance-rag-agent-endpoint"
 )
 
 print(f"✅ Agent deployed successfully!")
