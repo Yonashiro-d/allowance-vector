@@ -6,7 +6,7 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install -U langchain langchain-core langchain-databricks databricks-langchain databricks-vectorsearch langchain-huggingface sentence-transformers sentencepiece mlflow databricks-sdk mlflow-langchain
+# MAGIC %pip install -U langchain langchain-core langchain-databricks databricks-langchain databricks-vectorsearch langchain-huggingface sentence-transformers sentencepiece mlflow databricks-sdk
 
 # COMMAND ----------
 
@@ -314,7 +314,6 @@ with mlflow.start_run():
                     "databricks-sdk>=0.1.0",
                     "databricks-feature-lookup==1.9",
                     "mlflow>=2.0.0",
-                    "mlflow-langchain>=0.1.0",
                     "pandas>=1.5.0",
                     "langchain-huggingface>=0.0.1",
                     "sentence-transformers>=2.0.0",
