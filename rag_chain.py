@@ -6,7 +6,7 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install -U langchain langchain-core langchain-databricks databricks-langchain databricks-vectorsearch langchain-huggingface sentence-transformers sentencepiece mlflow databricks-sdk pypdf
+# MAGIC %pip install -U langchain langchain-core langchain-databricks databricks-langchain databricks-vectorsearch langchain-huggingface sentence-transformers sentencepiece mlflow databricks-sdk mlflow-langchain
 
 # COMMAND ----------
 
@@ -43,30 +43,6 @@ print(f"VECTOR_INDEX_NAME: {config.vector_index_name}")
 print(f"QUERY_EMBEDDING_MODEL: {config.query_embedding_model}")
 print(f"LLM_ENDPOINT: {config.llm_endpoint}")
 print(f"RETRIEVER_TOP_K: {config.retriever_top_k}")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## ベクトルデータ準備の実行
-
-# COMMAND ----------
-
-def run_vector_preparation():
-    """ベクトルデータ準備ノートブックを実行"""
-    notebook_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebookPath().get()
-    current_dir = "/".join(notebook_path.split("/")[:-1]) if "/" in notebook_path else "."
-    vector_prep_path = f"{current_dir}/vector_preparation"
-    
-    print(f"Running vector preparation notebook: {vector_prep_path}")
-    
-    try:
-        dbutils.notebook.run(vector_prep_path, timeout_seconds=3600)
-        print("Vector preparation completed successfully")
-    except Exception as e:
-        print(f"Error running vector preparation: {e}")
-        raise
-
-run_vector_preparation()
 
 # COMMAND ----------
 
@@ -109,10 +85,20 @@ def build_rag_chain(chain_config, config):
     document_chain = create_stuff_documents_chain(llm, prompt)
     rag_chain = create_retrieval_chain(retriever, document_chain)
     
-    return rag_chain
+    return rag_chain, retriever, vector_store
 
-rag_chain = build_rag_chain(chain_config, config)
+rag_chain, retriever, vector_store = build_rag_chain(chain_config, config)
 print("RAG Chain created successfully")
+
+# VectorStoreRetrieverの情報を表示
+print("\n=== VectorStoreRetriever Information ===")
+print(f"Retriever Type: {type(retriever).__name__}")
+print(f"Vector Store Type: {type(vector_store).__name__}")
+print(f"Index Name: {chain_config['vector_search_index']}")
+print(f"Top K: {config.retriever_top_k}")
+print(f"Text Column: chunked_text")
+print(f"Columns: ['chunk_id', 'chunked_text']")
+print("=" * 40)
 
 # COMMAND ----------
 
@@ -127,7 +113,6 @@ def query_rag(question: str) -> Dict[str, Any]:
 # COMMAND ----------
 
 def setup_mlflow_experiment():
-    """MLflow実験をセットアップ"""
     experiment_name = f"/Users/{w.current_user.me().user_name}/rag_chain_experiment"
     try:
         experiment = mlflow.get_experiment_by_name(experiment_name)
@@ -329,6 +314,7 @@ with mlflow.start_run():
                     "databricks-sdk>=0.1.0",
                     "databricks-feature-lookup==1.9",
                     "mlflow>=2.0.0",
+                    "mlflow-langchain>=0.1.0",
                     "pandas>=1.5.0",
                     "langchain-huggingface>=0.0.1",
                     "sentence-transformers>=2.0.0",
@@ -363,6 +349,29 @@ with mlflow.start_run():
     mlflow.set_tag("chain_type", "retrieval_chain")
     
     print(f"Model logged: {mlflow.active_run().info.run_id}")
+    
+    # MLflow Trace UI用にLangChainチェーンをログ
+    import mlflow.langchain
+    
+    mlflow.langchain.log_model(
+        lc_model=rag_chain,
+        artifact_path="langchain_model",
+        registered_model_name="commuting_allowance_rag_chain"
+    )
+    
+    print("LangChain model logged for Trace UI")
+    
+    # Trace UIで表示するためにチェーンを実行してトレースを記録
+    test_input = {"input": "通勤手当はいくらまで支給されますか？"}
+    tracer = mlflow.langchain.MlflowLangchainTracer()
+    result = rag_chain.invoke(
+        test_input,
+        config={"callbacks": [tracer]}
+    )
+    mlflow.log_dict(result, "chain_result.json")
+    
+    print("Trace recorded for MLflow Trace UI")
+    print(f"Trace ID: {tracer.trace_id if hasattr(tracer, 'trace_id') else 'N/A'}")
 
 # COMMAND ----------
 
