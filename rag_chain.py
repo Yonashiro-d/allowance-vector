@@ -55,7 +55,7 @@ chain_config = {
     "llm_model_serving_endpoint_name": "databricks-llama-4-maverick",
     "vector_search_endpoint_name": VECTOR_SEARCH_ENDPOINT,
     "vector_search_index": config.vector_index_name,
-    "llm_prompt_template": """You are an assistant that answers questions. Use the following pieces of retrieved context to answer the question. Some pieces of context may be irrelevant, in which case you should not use them to form the answer.\n\nContext: {context}""",
+    "llm_prompt_template": """あなたは質問に答えるアシスタントです。取得したコンテキストの内容をもとに質問に答えてください。一部のコンテキストが無関係な場合、それを回答に利用しないでください。\nコンテキスト: {context}""",
 }
 
 print("Chain Config:")
@@ -349,28 +349,23 @@ with mlflow.start_run():
     
     print(f"Model logged: {mlflow.active_run().info.run_id}")
     
-    # MLflow Trace UI用にLangChainチェーンをログ
+    # MLflow Trace UI用にチェーンを実行してトレースを記録
     import mlflow.langchain
     
-    mlflow.langchain.log_model(
-        lc_model=rag_chain,
-        artifact_path="langchain_model",
-        registered_model_name="commuting_allowance_rag_chain"
-    )
-    
-    print("LangChain model logged for Trace UI")
-    
-    # Trace UIで表示するためにチェーンを実行してトレースを記録
     test_input = {"input": "通勤手当はいくらまで支給されますか？"}
     tracer = mlflow.langchain.MlflowLangchainTracer()
+    
+    print("Executing RAG chain with MLflow tracing...")
     result = rag_chain.invoke(
         test_input,
         config={"callbacks": [tracer]}
     )
+    
     mlflow.log_dict(result, "chain_result.json")
     
     print("Trace recorded for MLflow Trace UI")
-    print(f"Trace ID: {tracer.trace_id if hasattr(tracer, 'trace_id') else 'N/A'}")
+    print(f"Run ID: {mlflow.active_run().info.run_id}")
+    print("You can view the trace in MLflow UI under the 'Traces' tab")
 
 # COMMAND ----------
 
