@@ -5,29 +5,36 @@ This agent uses Databricks Vector Search and LLM to answer questions
 about commuting allowance policies.
 """
 
-from typing import Any, Dict, List
+from typing import Any, Generator, Optional
+import uuid
+
 import mlflow
-from mlflow.pyfunc import PythonModel, PythonModelContext
-from mlflow.types.llm import ChatCompletionResponse, ChatChoice, ChatMessage
+from mlflow.pyfunc import ChatAgent
+from mlflow.types.agent import (
+    ChatAgentChunk,
+    ChatAgentMessage,
+    ChatAgentResponse,
+    ChatContext,
+)
 from langchain.chains import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnableLambda
 from databricks_langchain import ChatDatabricks, DatabricksVectorSearch
 from langchain_huggingface import HuggingFaceEmbeddings
 from rag_config import RAGConfig
 
 
-class RAGAgent(PythonModel):
+class RAGChatAgent(ChatAgent):
     """RAG Agent that uses Databricks Vector Search and LLM"""
     
     def __init__(self):
         """Initialize the RAG Agent"""
         self.config = RAGConfig()
         self.rag_chain = None
+        self._initialize_rag_chain()
     
-    def load_context(self, context: PythonModelContext):
-        """Load the RAG chain when the model is loaded"""
+    def _initialize_rag_chain(self):
+        """Initialize the RAG chain"""
         # Initialize embedding model
         embedding_model = HuggingFaceEmbeddings(model_name=self.config.query_embedding_model)
         
@@ -59,102 +66,93 @@ class RAGAgent(PythonModel):
         
         # Create document chain and RAG chain
         document_chain = create_stuff_documents_chain(llm, prompt)
-        rag_chain = create_retrieval_chain(retriever, document_chain)
-        
-        # Store the raw RAG chain (without message format converter)
-        # The message format conversion will be done in predict method
-        self.rag_chain = rag_chain
+        self.rag_chain = create_retrieval_chain(retriever, document_chain)
     
-    def _messages_to_rag_input(self, messages: Dict[str, Any]) -> Dict[str, str]:
-        """Convert agent messages format to RAG chain input format"""
-        if isinstance(messages, dict) and "messages" in messages:
-            messages_list = messages["messages"]
-        elif isinstance(messages, list):
-            messages_list = messages
-        else:
-            raise ValueError(f"Unexpected input format: {type(messages)}")
-        
+    def _extract_user_message(self, messages: list[ChatAgentMessage]) -> str:
+        """Extract the last user message content"""
         # Get the last user message
-        last_message = messages_list[-1] if messages_list else None
-        if last_message:
-            if isinstance(last_message, dict):
-                content = last_message.get("content", "")
-            elif hasattr(last_message, "content"):
-                content = last_message.content
-            else:
-                content = str(last_message)
-            return {"input": content}
-        return {"input": ""}
+        for message in reversed(messages):
+            if message.role == "user":
+                return message.content
+        return ""
     
-    def predict(self, context: PythonModelContext, model_input) -> List[Dict[str, Any]]:
-        """Predict using the RAG chain and return ChatCompletionResponse format
+    def predict(
+        self,
+        messages: list[ChatAgentMessage],
+        context: Optional[ChatContext] = None,
+        custom_inputs: Optional[dict[str, Any]] = None,
+    ) -> ChatAgentResponse:
+        """Predict using the RAG chain and return ChatAgentResponse
         
         Args:
-            context: MLflow model context
-            model_input: Can be a dict (ChatCompletionRequest format), list of dicts, or pandas DataFrame
+            messages: List of ChatAgentMessage objects
+            context: Optional ChatContext
+            custom_inputs: Optional custom inputs
             
         Returns:
-            List of ChatCompletionResponse dictionaries
+            ChatAgentResponse with the answer
         """
-        if self.rag_chain is None:
-            self.load_context(context)
+        # Extract the last user message
+        user_message = self._extract_user_message(messages)
         
-        # Handle different input formats (dict, list, or pandas DataFrame)
-        import pandas as pd
+        # Invoke the RAG chain
+        result = self.rag_chain.invoke({"input": user_message})
         
-        if isinstance(model_input, pd.DataFrame):
-            # Convert DataFrame to list of dicts
-            input_list = model_input.to_dict('records')
-        elif isinstance(model_input, dict):
-            # Single input as dict - could be ChatCompletionRequest format {"messages": [...]}
-            # or already in the format expected by _messages_to_rag_input
-            input_list = [model_input]
-        elif isinstance(model_input, list):
-            # Already a list
-            input_list = model_input
-        else:
-            raise ValueError(f"Unexpected input format: {type(model_input)}")
+        # Create ChatAgentMessage with the answer
+        response_message = ChatAgentMessage(
+            id=str(uuid.uuid4()),
+            role="assistant",
+            content=result.get("answer", "")
+        )
         
-        # Process each input in the batch
-        results = []
-        for input_item in input_list:
-            # Convert ChatCompletionRequest format to RAG chain input format
-            # input_item is expected to be {"messages": [...]} format from agent framework
-            # Use the helper method to convert messages to RAG input format
-            rag_input = self._messages_to_rag_input(input_item)
-            
-            # Invoke the RAG chain with the converted input
-            result = self.rag_chain.invoke(rag_input)
-            
-            # Create ChatCompletionResponse format
-            response_message = ChatMessage(
-                role="assistant",
-                content=result.get("answer", "")
-            )
-            
-            choice = ChatChoice(
-                index=0,
-                message=response_message,
-                finish_reason="stop"
-            )
-            
-            # Create ChatCompletionResponse with required fields for agent framework compatibility
-            import time
-            response = ChatCompletionResponse(
-                id=f"rag-response-{len(results)}",
-                choices=[choice],
-                created=int(time.time()),
-                model="rag-agent"
-            )
-            
-            # Convert to dictionary for MLflow
-            # Use full ChatCompletionResponse format for agent framework compatibility
-            response_dict = response.to_dict()
-            results.append(response_dict)
+        return ChatAgentResponse(messages=[response_message])
+    
+    def predict_stream(
+        self,
+        messages: list[ChatAgentMessage],
+        context: Optional[ChatContext] = None,
+        custom_inputs: Optional[dict[str, Any]] = None,
+    ) -> Generator[ChatAgentChunk, None, None]:
+        """Stream predictions using the RAG chain
         
-        return results
+        Args:
+            messages: List of ChatAgentMessage objects
+            context: Optional ChatContext
+            custom_inputs: Optional custom inputs
+            
+        Yields:
+            ChatAgentChunk objects
+        """
+        # Extract the last user message
+        user_message = self._extract_user_message(messages)
+        
+        # Invoke the RAG chain
+        result = self.rag_chain.invoke({"input": user_message})
+        
+        # Stream the answer word by word (simple implementation)
+        answer = result.get("answer", "")
+        message_id = str(uuid.uuid4())
+        
+        # Split answer into chunks (by sentences for better streaming)
+        import re
+        sentences = re.split(r'([。！？\n])', answer)
+        current_chunk = ""
+        
+        for part in sentences:
+            current_chunk += part
+            if len(current_chunk) > 10 or part in ['。', '！', '？', '\n']:
+                if current_chunk.strip():
+                    yield ChatAgentChunk(
+                        delta=ChatAgentMessage(
+                            id=message_id,
+                            role="assistant",
+                            content=current_chunk
+                        )
+                    )
+                    current_chunk = ""
 
 
-# Initialize and set the agent
-AGENT = RAGAgent()
+# Create the agent object, and specify it as the agent object to use when
+# loading the agent back for inference via mlflow.models.set_model()
+AGENT = RAGChatAgent()
 mlflow.models.set_model(AGENT)

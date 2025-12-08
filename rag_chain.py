@@ -190,55 +190,15 @@ UC_MODEL_NAME = f"{config.catalog}.{config.schema}.commuting_allowance_rag_agent
 # エージェントをMLflowにログ
 # mlflow.pyfunc.log_modelを使用
 from mlflow.models.resources import DatabricksServingEndpoint
-from pkg_resources import get_distribution
 
 # リソース定義（LLMエンドポイント）
 resources = [
     DatabricksServingEndpoint(endpoint_name=chain_config["llm_model_serving_endpoint_name"])
 ]
 
-# 入力例と出力例の定義（シグネチャ推論用）
-# エージェントフレームワークが認識できるように、messagesフィールドのみを含む形式を使用
-from mlflow.types.llm import ChatCompletionResponse, ChatChoice, ChatMessage
-
-# 入力例：messagesフィールドのみを含む形式（エージェントフレームワークが期待する形式）
-# ChatCompletionRequestのto_dict()はtemperature、n、streamなどのオプショナルフィールドも含むため、
-# messagesフィールドのみを含む辞書を直接作成
-input_example = {
-    "messages": [
-        {
-            "role": "user",
-            "content": "通勤手当はいくらまで支給されますか？"
-        }
-    ]
-}
-
-# ChatCompletionResponseオブジェクトを作成
-output_example_obj = ChatCompletionResponse(
-    id="test-response-id",
-    choices=[
-        ChatChoice(
-            index=0,
-            message=ChatMessage(
-                role="assistant",
-                content="通勤手当は月額15,000円まで支給されます。"
-            ),
-            finish_reason="stop"
-        )
-    ],
-    created=1234567890,
-    model="rag-agent"
-)
-
-# シグネチャを推論
-# messagesフィールドのみを含む入力例とChatCompletionResponseを使用してシグネチャを推論
-# これにより、エージェントフレームワークが認識できる形式のシグネチャが作成される
-from mlflow.models import infer_signature
-signature = infer_signature(input_example, output_example_obj.to_dict())
-
 with mlflow.start_run(run_name="commuting-allowance-rag-agent"):
-    # PyFuncモデルとしてログ（agent.pyファイルを指定）
-    # これにより、MLflowはagent.pyを読み込み、AGENT変数を使用
+    # ChatAgentとしてログ（agent.pyファイルを指定）
+    # ChatAgentインターフェースを使用するため、シグネチャは自動的に推論される
     logged_model_info = mlflow.pyfunc.log_model(
         artifact_path="agent",
         python_model="agent.py",
@@ -255,9 +215,6 @@ with mlflow.start_run(run_name="commuting-allowance-rag-agent"):
             "databricks-sdk",
         ],
         resources=resources,
-        input_example=input_example,
-        signature=signature,
-        registered_model_name=UC_MODEL_NAME
     )
     
     print(f"✅ Agent logged: {logged_model_info.model_uri}")
