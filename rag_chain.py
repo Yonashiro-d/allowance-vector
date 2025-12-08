@@ -15,14 +15,10 @@ dbutils.library.restartPython()
 # COMMAND ----------
 
 from typing import Dict, Any
-from databricks.sdk import WorkspaceClient
-from databricks.sdk.service.serving import EndpointCoreConfigInput, ServedModelInput
 from pyspark.sql import SparkSession
 import mlflow
 
 spark = SparkSession.builder.getOrCreate()
-w = WorkspaceClient()
-workspace_url = SparkSession.getActiveSession().conf.get("spark.databricks.workspaceUrl", None)
 
 # COMMAND ----------
 
@@ -112,7 +108,14 @@ def query_rag(question: str) -> Dict[str, Any]:
 # COMMAND ----------
 
 def setup_mlflow_experiment():
-    experiment_name = f"/Users/{w.current_user.me().user_name}/rag_chain_experiment"
+    # Databricksのユーザー名を取得
+    try:
+        user_name = dbutils.notebook.entry_point.getDbutils().notebook().getContext().userName().get()
+    except:
+        import os
+        user_name = os.environ.get("USER", "default_user")
+    
+    experiment_name = f"/Users/{user_name}/rag_chain_experiment"
     try:
         experiment = mlflow.get_experiment_by_name(experiment_name)
         if experiment is None:
@@ -131,31 +134,19 @@ experiment_name = setup_mlflow_experiment()
 
 # COMMAND ----------
 
-# 入力例の定義
-input_example = {
-    "messages": [
-        {"role": "user", "content": "通勤手当はいくらまで支給されますか？"}
-    ]
-}
+# MLflow Trace UI用にチェーンを実行してトレースを記録
+test_question = "通勤手当はいくらまで支給されますか？"
 
-# LangChainチェーンをMLflowにログ
 with mlflow.start_run(run_name="commuting-allowance-rag-chain"):
-    logged_chain_info = mlflow.langchain.log_model(
-        lc_model=rag_chain,  # チェーンオブジェクトを直接渡す
-        model_config=chain_config,  # チェーン設定
-        artifact_path="chain",  # MLflowで必要なパス
-        input_example=input_example,  # 入力スキーマを保存
-        registered_model_name="commuting_allowance_rag_chain"
-    )
-    
-    print(f"LangChain model logged: {logged_chain_info.model_uri}")
-    
+    # チェーンの設定とパラメータをログ
     mlflow.log_params({
         "llm_model_serving_endpoint_name": chain_config["llm_model_serving_endpoint_name"],
         "vector_search_endpoint_name": chain_config["vector_search_endpoint_name"],
         "vector_search_index": chain_config["vector_search_index"],
         "query_embedding_model": config.query_embedding_model,
-        "retriever_top_k": config.retriever_top_k
+        "retriever_top_k": config.retriever_top_k,
+        "catalog": config.catalog,
+        "schema": config.schema
     })
     
     mlflow.set_tag("task", "llm/v1/chat")
@@ -164,96 +155,45 @@ with mlflow.start_run(run_name="commuting-allowance-rag-chain"):
     mlflow.set_tag("model_type", "chat_completion")
     mlflow.set_tag("chain_type", "retrieval_chain")
     
-    # チェーンをロードしてテスト実行（MLflow Trace UIで確認可能）
-    print("Testing the chain locally to see the MLflow Trace...")
-    loaded_chain = mlflow.langchain.load_model(logged_chain_info.model_uri)
-    test_result = loaded_chain.invoke(input_example)
+    # チェーン設定をアーティファクトとして保存
+    mlflow.log_dict(chain_config, "chain_config.json")
     
-    mlflow.log_dict(test_result, "chain_test_result.json")
-    print("Chain test executed successfully")
+    # MLflow Trace UI用にチェーンを実行（MLflow 2.14.0+では自動的にトレースが記録される）
+    print("Executing RAG chain for MLflow Trace UI...")
+    print(f"Test question: {test_question}")
+    
+    # MLflow LangChain autologを有効化（MLflow 2.14.0+の場合）
+    try:
+        mlflow.langchain.autolog()
+    except AttributeError:
+        print("Note: mlflow.langchain.autolog() is not available in this MLflow version.")
+        print("Traces will still be recorded when the chain is invoked.")
+    
+    # チェーンを実行してトレースを記録
+    test_result = rag_chain.invoke({"input": test_question})
+    
+    # 結果をログ
+    mlflow.log_dict({
+        "question": test_question,
+        "answer": test_result.get("answer", ""),
+        "context_documents_count": len(test_result.get("context", []))
+    }, "chain_test_result.json")
+    
+    print("Chain executed successfully")
+    print(f"Answer: {test_result.get('answer', '')}")
     print(f"Run ID: {mlflow.active_run().info.run_id}")
+    print("You can view the trace in MLflow UI under the 'Traces' tab")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## MLflow Servingエンドポイント作成
-
-# COMMAND ----------
-
-endpoint_name = config.serving_endpoint_name
-model_name = "commuting_allowance_rag_chain"
-
-try:
-    from mlflow.tracking import MlflowClient
-    client = MlflowClient()
-    latest_version = client.get_latest_versions(model_name, stages=["None"])[0]
-    model_version = int(latest_version.version)
-    print(f"Using latest model version: {model_version}")
-except Exception as e:
-    print(f"Could not get latest model version: {e}")
-    model_version = 1
-    print(f"Using default model version: {model_version}")
-
-existing_endpoints = w.serving_endpoints.list()
-endpoint_exists = any(ep.name == endpoint_name for ep in existing_endpoints)
-
-if endpoint_exists:
-    import time
-    max_wait_time = 120
-    wait_interval = 5
-    elapsed_time = 0
-    
-    endpoint = w.serving_endpoints.get(endpoint_name)
-    state = endpoint.state
-    print(f"Existing endpoint state: {state}")
-    
-    while hasattr(state, 'config_update') and state.config_update == "IN_PROGRESS":
-        if elapsed_time >= max_wait_time:
-            raise TimeoutError(f"Endpoint update timeout after {max_wait_time} seconds")
-        print(f"Waiting for endpoint update to complete... ({elapsed_time}s)")
-        time.sleep(wait_interval)
-        elapsed_time += wait_interval
-        endpoint = w.serving_endpoints.get(endpoint_name)
-        state = endpoint.state
-
-environment_vars = {}
-if workspace_url:
-    environment_vars["DATABRICKS_WORKSPACE_URL"] = workspace_url
-    environment_vars["DATABRICKS_HOST"] = workspace_url
-
-served_model = ServedModelInput(
-    name=model_name,
-    model_name=model_name,
-    model_version=str(model_version),
-    workload_size="Small",
-    scale_to_zero_enabled=True,
-    environment_vars=environment_vars if environment_vars else {}
-)
-
-if endpoint_exists:
-    try:
-        w.serving_endpoints.update_config(
-            name=endpoint_name,
-            served_models=[served_model]
-        )
-        print(f"Endpoint updated: {endpoint_name}")
-    except Exception as e:
-        if "currently being updated" in str(e):
-            print(f"Endpoint is still being updated. Please wait and try again later.")
-            print(f"Current endpoint state: {endpoint.state}")
-        else:
-            raise
-else:
-    endpoint_config = EndpointCoreConfigInput(
-        name=endpoint_name,
-        served_models=[served_model]
-    )
-    w.serving_endpoints.create(
-        name=endpoint_name,
-        config=endpoint_config
-    )
-    print(f"Endpoint created: {endpoint_name}")
-
-endpoint = w.serving_endpoints.get(endpoint_name)
-print(f"Status: {endpoint.state}")
+# MAGIC ## 注意事項
+# MAGIC
+# MAGIC このノートブックでは、LangChainチェーンを直接MLflowモデルとしてログすることはできません。
+# MAGIC 理由：
+# MAGIC - `VectorStoreRetriever`には`loader_fn`が必要
+# MAGIC - `ChatDatabricks`はカスタムコンポーネントのため直接保存できない
+# MAGIC
+# MAGIC 代わりに、チェーンを実行してMLflow Trace UIでトレースを確認できます。
+# MAGIC MLflow UIの「Traces」タブでチェーンの実行フローを確認してください。
 
