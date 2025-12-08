@@ -525,22 +525,39 @@ except Exception as e:
 
 if endpoint_exists:
     import time
-    max_wait_time = 120
-    wait_interval = 5
+    max_wait_time = 300  # 5分に延長
+    wait_interval = 10  # 10秒間隔に変更
     elapsed_time = 0
     
     endpoint = w.serving_endpoints.get(endpoint_name)
     state = endpoint.state
     print(f"Existing endpoint state: {state}")
     
+    # エンドポイントの更新が完了するまで待機
     while hasattr(state, 'config_update') and state.config_update == "IN_PROGRESS":
         if elapsed_time >= max_wait_time:
-            raise TimeoutError(f"Endpoint update timeout after {max_wait_time} seconds")
-        print(f"Waiting for endpoint update to complete... ({elapsed_time}s)")
+            print(f"⚠️ Warning: Endpoint update timeout after {max_wait_time} seconds")
+            print("You may need to wait longer or check the endpoint status manually.")
+            break
+        print(f"⏳ Waiting for endpoint update to complete... ({elapsed_time}s / {max_wait_time}s)")
         time.sleep(wait_interval)
         elapsed_time += wait_interval
-        endpoint = w.serving_endpoints.get(endpoint_name)
-        state = endpoint.state
+        try:
+            endpoint = w.serving_endpoints.get(endpoint_name)
+            state = endpoint.state
+            print(f"Current state: {state}")
+        except Exception as e:
+            print(f"Error checking endpoint state: {e}")
+            break
+    
+    # 最終状態を確認
+    endpoint = w.serving_endpoints.get(endpoint_name)
+    state = endpoint.state
+    print(f"Final endpoint state: {state}")
+    
+    if hasattr(state, 'config_update') and state.config_update == "IN_PROGRESS":
+        print("⚠️ Endpoint is still being updated. Please wait and try again later.")
+        print("You can check the endpoint status in the Databricks UI.")
 
 # 環境変数の設定
 print(f"\n=== Environment Variables ===")
@@ -557,106 +574,92 @@ else:
 environment_vars["VECTOR_SEARCH_ENDPOINT"] = VECTOR_SEARCH_ENDPOINT
 print(f"VECTOR_SEARCH_ENDPOINT: {VECTOR_SEARCH_ENDPOINT}")
 
-# Unity Catalogモデルの場合、entity_nameを使用
-# モデルがUnity Catalogに登録されているか確認
+# Unity Catalog形式のentity_nameを準備（MLflow Deployments SDK用）
 entity_name = f"{config.catalog}.{config.schema}.{model_name}"
 print(f"\n=== Served Model Configuration ===")
 print(f"Entity name (Unity Catalog): {entity_name}")
+print(f"Model name: {model_name}")
 print(f"Model version: {model_version}")
 print(f"Workload size: Small")
 print(f"Scale to zero: True")
 
-# ServedModelInputの作成（まずUnity Catalog形式を試す）
-try:
-    served_model = ServedModelInput(
-        name=f"{model_name}-{model_version}",
-        entity_name=entity_name,  # Unity Catalog形式
-        entity_version=str(model_version),
-        workload_size="Small",
-        scale_to_zero_enabled=True,
-        environment_vars=environment_vars if environment_vars else {}
-    )
-    print("Using Unity Catalog format (entity_name)")
-except Exception as e:
-    print(f"Error creating served model with Unity Catalog format: {e}")
-    print("Trying standard format (model_name)...")
-    import traceback
-    traceback.print_exc()
-    
-    # 標準形式にフォールバック
-    try:
-        served_model = ServedModelInput(
-            name=f"{model_name}-{model_version}",
-            model_name=model_name,
-            model_version=str(model_version),
-            workload_size="Small",
-            scale_to_zero_enabled=True,
-            environment_vars=environment_vars if environment_vars else {}
-        )
-        print("Using standard format (model_name)")
-    except Exception as e2:
-        print(f"Error creating served model with standard format: {e2}")
-        import traceback
-        traceback.print_exc()
-        raise
+# ServedModelInputの作成（WorkspaceClient SDKは標準形式のみサポート）
+# Unity Catalog形式はMLflow Deployments SDKで使用
+served_model = ServedModelInput(
+    name=f"{model_name}-{model_version}",
+    model_name=model_name,
+    model_version=str(model_version),
+    workload_size="Small",
+    scale_to_zero_enabled=True,
+    environment_vars=environment_vars if environment_vars else {}
+)
+print("Using standard format (model_name) for WorkspaceClient SDK")
 
 # エンドポイントの作成/更新
 print(f"\n=== Endpoint Creation/Update ===")
+
+# エンドポイントが更新中でないことを確認
 if endpoint_exists:
-    try:
-        print(f"Updating existing endpoint: {endpoint_name}")
-        print(f"Served model config: {served_model}")
-        w.serving_endpoints.update_config(
-            name=endpoint_name,
-            served_models=[served_model]
-        )
-        print(f"✅ Endpoint updated successfully: {endpoint_name}")
-    except Exception as e:
-        print(f"❌ Error updating endpoint: {e}")
-        import traceback
-        traceback.print_exc()
-        
-        if "currently being updated" in str(e):
-            print(f"Endpoint is still being updated. Please wait and try again later.")
-            if 'endpoint' in locals():
-                print(f"Current endpoint state: {endpoint.state}")
-        else:
-            print("\nTrying alternative method: MLflow Deployments SDK...")
-            try:
-                import mlflow.deployments
-                deploy_client = mlflow.deployments.get_deploy_client("databricks")
-                
-                # MLflow Deployments SDKを使用
-                config_dict = {
-                    "served_entities": [
-                        {
-                            "entity_name": entity_name if 'entity_name' in locals() else model_name,
-                            "entity_version": str(model_version),
-                            "workload_size": "Small",
-                            "scale_to_zero_enabled": True,
-                            "environment_vars": environment_vars
-                        }
-                    ],
-                    "traffic_config": {
-                        "routes": [
+    endpoint = w.serving_endpoints.get(endpoint_name)
+    state = endpoint.state
+    
+    if hasattr(state, 'config_update') and state.config_update == "IN_PROGRESS":
+        print(f"⚠️ Endpoint is still being updated. Skipping update for now.")
+        print(f"Please wait for the current update to complete and run this cell again.")
+        print(f"Current endpoint state: {state}")
+    else:
+        try:
+            print(f"Updating existing endpoint: {endpoint_name}")
+            print(f"Served model config: {served_model}")
+            w.serving_endpoints.update_config(
+                name=endpoint_name,
+                served_models=[served_model]
+            )
+            print(f"✅ Endpoint updated successfully: {endpoint_name}")
+        except Exception as e:
+            print(f"❌ Error updating endpoint: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            if "currently being updated" in str(e) or "IN_PROGRESS" in str(e):
+                print(f"⚠️ Endpoint is still being updated. Please wait and try again later.")
+            else:
+                print("\nTrying alternative method: MLflow Deployments SDK...")
+                try:
+                    import mlflow.deployments
+                    deploy_client = mlflow.deployments.get_deploy_client("databricks")
+                    
+                    # MLflow Deployments SDKを使用（Unity Catalog形式を試す）
+                    config_dict = {
+                        "served_entities": [
                             {
-                                "served_model_name": f"{model_name}-{model_version}",
-                                "traffic_percentage": 100
+                                "entity_name": entity_name,
+                                "entity_version": str(model_version),
+                                "workload_size": "Small",
+                                "scale_to_zero_enabled": True,
+                                "environment_vars": environment_vars
                             }
-                        ]
+                        ],
+                        "traffic_config": {
+                            "routes": [
+                                {
+                                    "served_model_name": f"{model_name}-{model_version}",
+                                    "traffic_percentage": 100
+                                }
+                            ]
+                        }
                     }
-                }
-                
-                deploy_client.update_endpoint(
-                    endpoint=endpoint_name,
-                    config=config_dict
-                )
-                print(f"✅ Endpoint updated using MLflow Deployments SDK: {endpoint_name}")
-            except Exception as e2:
-                print(f"❌ Error with MLflow Deployments SDK: {e2}")
-                import traceback
-                traceback.print_exc()
-                raise
+                    
+                    deploy_client.update_endpoint(
+                        endpoint=endpoint_name,
+                        config=config_dict
+                    )
+                    print(f"✅ Endpoint updated using MLflow Deployments SDK: {endpoint_name}")
+                except Exception as e2:
+                    print(f"❌ Error with MLflow Deployments SDK: {e2}")
+                    import traceback
+                    traceback.print_exc()
+                    print("\n💡 Suggestion: Wait for the current update to complete and try again.")
 else:
     try:
         print(f"Creating new endpoint: {endpoint_name}")
