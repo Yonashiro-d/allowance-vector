@@ -85,29 +85,57 @@ class RAGAgent(PythonModel):
             return {"input": content}
         return {"input": ""}
     
-    def predict(self, context: PythonModelContext, model_input: Dict[str, Any]) -> Dict[str, Any]:
-        """Predict using the RAG chain and return ChatCompletionResponse format"""
+    def predict(self, context: PythonModelContext, model_input) -> List[Dict[str, Any]]:
+        """Predict using the RAG chain and return ChatCompletionResponse format
+        
+        Args:
+            context: MLflow model context
+            model_input: Can be a dict, list of dicts, or pandas DataFrame
+            
+        Returns:
+            List of ChatCompletionResponse dictionaries
+        """
         if self.rag_chain is None:
             self.load_context(context)
         
-        # Invoke the RAG chain
-        result = self.rag_chain.invoke(model_input)
+        # Handle different input formats (dict, list, or pandas DataFrame)
+        import pandas as pd
         
-        # Create ChatCompletionResponse format
-        response_message = ChatMessage(
-            role="assistant",
-            content=result.get("answer", "")
-        )
+        if isinstance(model_input, pd.DataFrame):
+            # Convert DataFrame to list of dicts
+            input_list = model_input.to_dict('records')
+        elif isinstance(model_input, dict):
+            # Single input as dict
+            input_list = [model_input]
+        elif isinstance(model_input, list):
+            # Already a list
+            input_list = model_input
+        else:
+            raise ValueError(f"Unexpected input format: {type(model_input)}")
         
-        choice = ChatChoice(
-            index=0,
-            message=response_message
-        )
+        # Process each input in the batch
+        results = []
+        for input_item in input_list:
+            # Invoke the RAG chain
+            result = self.rag_chain.invoke(input_item)
+            
+            # Create ChatCompletionResponse format
+            response_message = ChatMessage(
+                role="assistant",
+                content=result.get("answer", "")
+            )
+            
+            choice = ChatChoice(
+                index=0,
+                message=response_message
+            )
+            
+            response = ChatCompletionResponse(choices=[choice])
+            
+            # Convert to dictionary for MLflow
+            results.append(response.to_dict())
         
-        response = ChatCompletionResponse(choices=[choice])
-        
-        # Convert to dictionary for MLflow
-        return response.to_dict()
+        return results
 
 
 # Initialize and set the agent

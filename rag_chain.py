@@ -244,7 +244,6 @@ with mlflow.start_run(run_name="commuting-allowance-rag-agent"):
         resources=resources,
         input_example=input_example,
         signature=signature,
-        example_no_conversion=True,
         registered_model_name=UC_MODEL_NAME
     )
     
