@@ -198,14 +198,19 @@ resources = [
 ]
 
 # 入力例と出力例の定義（シグネチャ推論用）
-from mlflow.types.llm import ChatCompletionResponse, ChatChoice, ChatMessage
+from mlflow.types.llm import ChatCompletionRequest, ChatCompletionResponse, ChatChoice, ChatMessage
 
-input_example = {
-    "messages": [
-        {"role": "user", "content": "通勤手当はいくらまで支給されますか？"}
+# ChatCompletionRequestオブジェクトを作成
+input_example_obj = ChatCompletionRequest(
+    messages=[
+        ChatMessage(
+            role="user",
+            content="通勤手当はいくらまで支給されますか？"
+        )
     ]
-}
+)
 
+# ChatCompletionResponseオブジェクトを作成
 output_example_obj = ChatCompletionResponse(
     id="test-response-id",
     choices=[
@@ -223,8 +228,13 @@ output_example_obj = ChatCompletionResponse(
 )
 
 # シグネチャを推論
+# ChatCompletionRequest/ChatCompletionResponseオブジェクトを使用してシグネチャを推論
+# これにより、エージェントフレームワークが認識できる形式のシグネチャが作成される
 from mlflow.models import infer_signature
-signature = infer_signature(input_example, output_example_obj.to_dict())
+signature = infer_signature(input_example_obj.to_dict(), output_example_obj.to_dict())
+
+# input_exampleも辞書形式で保持（表示用）
+input_example = input_example_obj.to_dict()
 
 with mlflow.start_run(run_name="commuting-allowance-rag-agent"):
     # PyFuncモデルとしてログ（agent.pyファイルを指定）
@@ -286,7 +296,6 @@ print(f"   Version: {uc_registered_model_info.version}")
 
 # エージェントをモデルサービングにデプロイ
 from databricks import agents
-from databricks.sdk import WorkspaceClient
 
 deployment_info = agents.deploy(
     model_name=UC_MODEL_NAME,
@@ -295,23 +304,5 @@ deployment_info = agents.deploy(
 
 print(f"✅ Agent deployed successfully!")
 print(f"   Deployment info: {deployment_info}")
-
-# エンドポイント名とURLを取得
-w = WorkspaceClient()
-# エンドポイント名は通常 agents_{model_name} の形式（ドットがハイフンに置き換えられる）
-endpoint_name = deployment_info.endpoint_name if hasattr(deployment_info, 'endpoint_name') else f"agents_{UC_MODEL_NAME.replace('.', '-')}"
-
-try:
-    endpoint = w.serving_endpoints.get(endpoint_name)
-    endpoint_url = f"{w.config.host}/serving-endpoints/{endpoint_name}/invocations"
-    
-    print(f"\n=== Endpoint Information ===")
-    print(f"Endpoint Name: {endpoint_name}")
-    print(f"Endpoint URL: {endpoint_url}")
-    print(f"Endpoint State: {endpoint.state}")
-    print(f"💡 You can now use the agent in Databricks Playground!")
-    print(f"💡 Review App and API endpoint are available")
-except Exception as e:
-    print(f"⚠️ Could not retrieve endpoint information: {e}")
-    print(f"   Endpoint name: {endpoint_name}")
-    print(f"💡 Please check the Databricks UI for the endpoint details")
+print(f"💡 You can now use the agent in Databricks Playground!")
+print(f"💡 Review App and API endpoint are available")

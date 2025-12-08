@@ -61,8 +61,9 @@ class RAGAgent(PythonModel):
         document_chain = create_stuff_documents_chain(llm, prompt)
         rag_chain = create_retrieval_chain(retriever, document_chain)
         
-        # Wrap with message format converter
-        self.rag_chain = RunnableLambda(self._messages_to_rag_input) | rag_chain
+        # Store the raw RAG chain (without message format converter)
+        # The message format conversion will be done in predict method
+        self.rag_chain = rag_chain
     
     def _messages_to_rag_input(self, messages: Dict[str, Any]) -> Dict[str, str]:
         """Convert agent messages format to RAG chain input format"""
@@ -90,7 +91,7 @@ class RAGAgent(PythonModel):
         
         Args:
             context: MLflow model context
-            model_input: Can be a dict, list of dicts, or pandas DataFrame
+            model_input: Can be a dict (ChatCompletionRequest format), list of dicts, or pandas DataFrame
             
         Returns:
             List of ChatCompletionResponse dictionaries
@@ -105,7 +106,8 @@ class RAGAgent(PythonModel):
             # Convert DataFrame to list of dicts
             input_list = model_input.to_dict('records')
         elif isinstance(model_input, dict):
-            # Single input as dict
+            # Single input as dict - could be ChatCompletionRequest format {"messages": [...]}
+            # or already in the format expected by _messages_to_rag_input
             input_list = [model_input]
         elif isinstance(model_input, list):
             # Already a list
@@ -116,8 +118,13 @@ class RAGAgent(PythonModel):
         # Process each input in the batch
         results = []
         for input_item in input_list:
-            # Invoke the RAG chain
-            result = self.rag_chain.invoke(input_item)
+            # Convert ChatCompletionRequest format to RAG chain input format
+            # input_item is expected to be {"messages": [...]} format from agent framework
+            # Use the helper method to convert messages to RAG input format
+            rag_input = self._messages_to_rag_input(input_item)
+            
+            # Invoke the RAG chain with the converted input
+            result = self.rag_chain.invoke(rag_input)
             
             # Create ChatCompletionResponse format
             response_message = ChatMessage(
@@ -127,14 +134,16 @@ class RAGAgent(PythonModel):
             
             choice = ChatChoice(
                 index=0,
-                message=response_message
+                message=response_message,
+                finish_reason="stop"
             )
             
             # Create ChatCompletionResponse with required fields for agent framework compatibility
+            import time
             response = ChatCompletionResponse(
                 id=f"rag-response-{len(results)}",
                 choices=[choice],
-                created=int(__import__("time").time()),
+                created=int(time.time()),
                 model="rag-agent"
             )
             
