@@ -99,7 +99,6 @@ def build_rag_chain(chain_config: dict[str, Any], config: RAGConfig) -> tuple[An
     
     vector_store = DatabricksVectorSearch(
         index_name=chain_config["vector_search_index"],
-        endpoint_name=chain_config["vector_search_endpoint_name"],
         embedding=embedding_model,
         text_column="chunked_text",
         columns=["chunk_id", "chunked_text"]

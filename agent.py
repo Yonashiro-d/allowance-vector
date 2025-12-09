@@ -32,7 +32,6 @@ class RAGChatAgent(ChatAgent):
         
         vector_store = DatabricksVectorSearch(
             index_name=self.config.vector_index_name,
-            endpoint_name=self.config.vector_search_endpoint,
             embedding=embedding_model,
             text_column="chunked_text",
             columns=["chunk_id", "chunked_text"]
