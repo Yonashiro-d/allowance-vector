@@ -175,9 +175,6 @@ resources = [
 ]
 
 with mlflow.start_run(run_name="commuting-allowance-rag-agent"):
-    # ChatAgentとしてログ（agent.pyファイルを指定）
-    # ChatAgentインターフェースを使用するため、シグネチャは自動的に推論される
-    # requirements.txtから依存関係を読み込む
     with open("requirements.txt", "r") as f:
         pip_requirements = [line.strip() for line in f if line.strip() and not line.startswith("#")]
     
@@ -224,14 +221,106 @@ print(f"   Version: {uc_registered_model_info.version}")
 
 # エージェントをモデルサービングにデプロイ
 from databricks import agents
+from databricks.sdk import WorkspaceClient
 
-deployment_info = agents.deploy(
-    model_name=UC_MODEL_NAME,
-    model_version=uc_registered_model_info.version,
-    endpoint_name="commuting-allowance-rag-agent-endpoint"
-)
+print(f"Deploying agent to serving endpoint...")
+print(f"  Model: {UC_MODEL_NAME}")
+print(f"  Version: {uc_registered_model_info.version}")
+print(f"  Endpoint: commuting-allowance-rag-agent-endpoint")
 
-print(f"✅ Agent deployed successfully!")
-print(f"   Deployment info: {deployment_info}")
-print(f"💡 You can now use the agent in Databricks Playground!")
-print(f"💡 Review App and API endpoint are available")
+try:
+    deployment_info = agents.deploy(
+        model_name=UC_MODEL_NAME,
+        model_version=uc_registered_model_info.version,
+        endpoint_name="commuting-allowance-rag-agent-endpoint"
+    )
+    
+    print(f"✅ Agent deployed successfully!")
+    print(f"   Deployment info: {deployment_info}")
+    
+    # エンドポイント情報を取得
+    w = WorkspaceClient()
+    endpoint_name = "commuting-allowance-rag-agent-endpoint"
+    
+    try:
+        endpoint = w.serving_endpoints.get(endpoint_name)
+        endpoint_url = f"{w.config.host}/serving-endpoints/{endpoint_name}/invocations"
+        
+        print(f"\n=== Endpoint Information ===")
+        print(f"Endpoint Name: {endpoint_name}")
+        print(f"Endpoint URL: {endpoint_url}")
+        print(f"Endpoint State: {endpoint.state}")
+        print(f"\n💡 You can now use the agent in Databricks Playground!")
+        print(f"💡 Review App and API endpoint are available")
+        print(f"\n📝 Test the agent:")
+        print(f"   from databricks.sdk import WorkspaceClient")
+        print(f"   w = WorkspaceClient()")
+        print(f"   client = w.serving_endpoints.get_open_ai_client()")
+        print(f"   response = client.chat.completions.create(")
+        print(f"       model=\"{endpoint_name}\",")
+        print(f"       messages=[{{\"role\": \"user\", \"content\": \"通勤手当はいくらまで支給されますか？\"}}]")
+        print(f"   )")
+        print(f"   print(response.choices[0].message.content)")
+    except Exception as e:
+        print(f"⚠️ Could not retrieve endpoint information: {e}")
+        print(f"💡 Please check the Databricks UI for the endpoint details")
+        
+except Exception as e:
+    print(f"❌ Error deploying agent: {e}")
+    print(f"\nTroubleshooting steps:")
+    print(f"1. Check if the model is correctly registered in Unity Catalog")
+    print(f"2. Verify model version: {uc_registered_model_info.version}")
+    print(f"3. Check if endpoint name 'commuting-allowance-rag-agent-endpoint' is available")
+    print(f"4. Verify permissions for model serving")
+    raise
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## エージェントのテスト
+# MAGIC
+# MAGIC デプロイされたエージェントをテストします。
+
+# COMMAND ----------
+
+# エージェントをテスト（オプション）
+# エンドポイントが準備できるまで少し待つ必要がある場合があります
+import time
+
+endpoint_name = "commuting-allowance-rag-agent-endpoint"
+print(f"Testing agent endpoint: {endpoint_name}")
+
+try:
+    w = WorkspaceClient()
+    
+    # エンドポイントの状態を確認
+    endpoint = w.serving_endpoints.get(endpoint_name)
+    print(f"Endpoint state: {endpoint.state}")
+    
+    if endpoint.state.get("ready") == "READY":
+        # OpenAI互換クライアントを取得
+        client = w.serving_endpoints.get_open_ai_client()
+        
+        # テストクエリ
+        test_messages = [
+            {"role": "user", "content": "通勤手当はいくらまで支給されますか？"}
+        ]
+        
+        print(f"\nSending test query: {test_messages[0]['content']}")
+        response = client.chat.completions.create(
+            model=endpoint_name,
+            messages=test_messages
+        )
+        
+        print(f"\n✅ Agent response:")
+        print(f"   {response.choices[0].message.content}")
+    else:
+        print(f"⚠️ Endpoint is not ready yet. State: {endpoint.state}")
+        print(f"💡 Please wait a few minutes and test manually in Databricks Playground")
+        
+except Exception as e:
+    print(f"⚠️ Could not test endpoint automatically: {e}")
+    print(f"💡 You can test the agent manually:")
+    print(f"   1. Go to Databricks UI > Serving > {endpoint_name}")
+    print(f"   2. Click 'Open in Playground'")
+    print(f"   3. Send a test message: '通勤手当はいくらまで支給されますか？'")

@@ -31,7 +31,13 @@ class RAGChatAgent(ChatAgent):
         """Initialize the RAG Agent"""
         self.config = RAGConfig()
         self.rag_chain = None
-        self._initialize_rag_chain()
+        # RAGチェーンの初期化は遅延初期化（predictメソッド内で実行）
+        # これにより、モデルサービング環境での初期化タイミングの問題を回避
+    
+    def _ensure_rag_chain_initialized(self):
+        """RAGチェーンが初期化されていない場合、初期化する（遅延初期化）"""
+        if self.rag_chain is None:
+            self._initialize_rag_chain()
     
     def _initialize_rag_chain(self):
         """Initialize the RAG chain"""
@@ -92,6 +98,9 @@ class RAGChatAgent(ChatAgent):
         Returns:
             ChatAgentResponse with the answer
         """
+        # Ensure RAG chain is initialized (lazy initialization)
+        self._ensure_rag_chain_initialized()
+        
         # Extract the last user message
         user_message = self._extract_user_message(messages)
         
@@ -123,6 +132,9 @@ class RAGChatAgent(ChatAgent):
         Yields:
             ChatAgentChunk objects
         """
+        # Ensure RAG chain is initialized (lazy initialization)
+        self._ensure_rag_chain_initialized()
+        
         # Extract the last user message
         user_message = self._extract_user_message(messages)
         
