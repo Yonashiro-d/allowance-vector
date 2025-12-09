@@ -173,12 +173,15 @@ def get_pdf_path(data_path: str = None, pdf_path: str = None) -> str:
 # MAGIC %md
 # MAGIC ## PDFパスの指定
 # MAGIC
-# MAGIC フルパスを指定してください。`/Workspace/Users/`配下の場合は一時コピーが必要です。
+# MAGIC フルパスを指定するか、Repos配下のファイルを自動検出します。
 
 # COMMAND ----------
 
 # フルパスを指定
 pdf_path = get_pdf_path(pdf_path="/Workspace/Users/toshimitsu-yu@itec.hankyu-hanshin.co.jp/allowance-vector/通勤手当支給規程（2024-04-01）.pdf")
+
+# または、Repos配下のファイルを自動検出
+# pdf_path = get_pdf_path()
 
 print(f"PDF path: {pdf_path}")
 
@@ -190,13 +193,31 @@ print(f"PDF path: {pdf_path}")
 # COMMAND ----------
 
 from pypdf import PdfReader
+import os
 
-if pdf_path.startswith("/Workspace/"):
-    pdf_path = f"/dbfs{pdf_path}"
-
-with open(pdf_path, "rb") as f:
-    reader = PdfReader(f)
-    raw_text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
+if pdf_path.startswith("/Workspace/Repos/"):
+    pdf_path = pdf_path.replace("/Workspace/Repos/", "/dbfs/Repos/")
+    with open(pdf_path, "rb") as f:
+        reader = PdfReader(f)
+        raw_text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
+elif pdf_path.startswith("/Workspace/"):
+    temp_file = f"/dbfs/tmp/{os.path.basename(pdf_path)}"
+    try:
+        dbutils.fs.cp(f"file:{pdf_path}", f"dbfs://{temp_file}")
+        with open(temp_file, "rb") as f:
+            reader = PdfReader(f)
+            raw_text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
+        dbutils.fs.rm(f"dbfs://{temp_file}")
+    except Exception as e:
+        raise FileNotFoundError(f"Failed to read PDF from {pdf_path}: {e}")
+elif pdf_path.startswith("/dbfs/"):
+    with open(pdf_path, "rb") as f:
+        reader = PdfReader(f)
+        raw_text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
+else:
+    with open(pdf_path, "rb") as f:
+        reader = PdfReader(f)
+        raw_text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
 
 print(f"Extracted text: {len(raw_text)} characters, {len(reader.pages)} pages")
 
