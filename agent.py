@@ -21,6 +21,8 @@ from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
 from databricks_langchain import ChatDatabricks, DatabricksVectorSearch
 from langchain_huggingface import HuggingFaceEmbeddings
+from databricks.vector_search.client import VectorSearchClient
+from databricks.vector_search.utils import CredentialStrategy
 from rag_config import RAGConfig
 
 
@@ -44,12 +46,19 @@ class RAGChatAgent(ChatAgent):
         # Initialize embedding model
         embedding_model = HuggingFaceEmbeddings(model_name=self.config.query_embedding_model)
         
+        # Initialize VectorSearchClient with model serving user credentials
+        # This ensures proper authentication in model serving environment
+        vector_search_client = VectorSearchClient(
+            credential_strategy=CredentialStrategy.MODEL_SERVING_USER_CREDENTIALS
+        )
+        
         # Initialize vector store
         vector_store = DatabricksVectorSearch(
             index_name=self.config.vector_index_name,
             embedding=embedding_model,
             text_column="chunked_text",
-            columns=["chunk_id", "chunked_text"]
+            columns=["chunk_id", "chunked_text"],
+            vector_search_client=vector_search_client
         )
         
         # Initialize LLM
