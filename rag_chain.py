@@ -1,8 +1,18 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # RAGチェーン構築
+# MAGIC # RAGチェーン構築とエージェントデプロイ
 # MAGIC
-# MAGIC Databricks Vector Searchを使用してRAGチェーンを構築します。
+# MAGIC このノートブックでは以下の処理を実行します：
+# MAGIC 1. RAGチェーンの構築（Vector Search + LLM）
+# MAGIC 2. MLflow Trace記録（Build）
+# MAGIC 3. ChatAgentモデルのログとUnity Catalogへの登録
+# MAGIC 4. モデルサービングエンドポイントへのデプロイ
+# MAGIC 5. デプロイされたエージェントのテスト
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 依存関係のインストール
 
 # COMMAND ----------
 
@@ -10,11 +20,21 @@
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ## ライブラリの再起動
+
+# COMMAND ----------
+
 dbutils.library.restartPython()
 
 # COMMAND ----------
 
-from typing import Dict, Any
+# MAGIC %md
+# MAGIC ## 基本インポート
+
+# COMMAND ----------
+
+from typing import Any
 from pyspark.sql import SparkSession
 import mlflow
 
@@ -22,21 +42,36 @@ spark = SparkSession.builder.getOrCreate()
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ## RAG設定の読み込み
+
+# COMMAND ----------
+
 from rag_config import RAGConfig
+
+config = RAGConfig()
+print(f"Catalog: {config.catalog}, Schema: {config.schema}")
+print(f"Delta Table: {config.delta_table_name}")
+print(f"Vector Index: {config.vector_index_name}")
+print(f"LLM Endpoint: {config.llm_endpoint}")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## LangChain関連のインポート
+
+# COMMAND ----------
+
 from langchain.chains import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
 from databricks_langchain import ChatDatabricks, DatabricksVectorSearch
 from langchain_huggingface import HuggingFaceEmbeddings
 
-config = RAGConfig()
-
-print(f"Config: catalog={config.catalog}, schema={config.schema}, table={config.delta_table_name}, index={config.vector_index_name}, llm={config.llm_endpoint}")
-
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## RAGチェーン構築
+# MAGIC ## チェーン設定の定義
 
 # COMMAND ----------
 
@@ -52,16 +87,19 @@ chain_config = {
 質問: {input}""",
 }
 
-print("Chain config:", chain_config)
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## RAGチェーン構築関数の定義
 
 # COMMAND ----------
 
-def build_rag_chain(chain_config, config):
-    """RAGチェーンを構築"""
+def build_rag_chain(chain_config: dict[str, Any], config: RAGConfig) -> tuple[Any, Any, Any]:
     embedding_model = HuggingFaceEmbeddings(model_name=config.query_embedding_model)
     
     vector_store = DatabricksVectorSearch(
         index_name=chain_config["vector_search_index"],
+        endpoint_name=chain_config["vector_search_endpoint_name"],
         embedding=embedding_model,
         text_column="chunked_text",
         columns=["chunk_id", "chunked_text"]
@@ -79,22 +117,27 @@ def build_rag_chain(chain_config, config):
     
     return rag_chain, retriever, vector_store
 
-rag_chain, retriever, vector_store = build_rag_chain(chain_config, config)
-print("RAG chain created")
+# COMMAND ----------
 
-# VectorStoreRetrieverの情報を表示
-print(f"Retriever: {type(retriever).__name__}, Index: {chain_config['vector_search_index']}, Top K: {config.retriever_top_k}")
+# MAGIC %md
+# MAGIC ## RAGチェーンの構築
+
+# COMMAND ----------
+
+rag_chain, retriever, vector_store = build_rag_chain(chain_config, config)
+print(f"RAG chain created: {type(rag_chain).__name__}")
+print(f"Retriever: {type(retriever).__name__}, Top K: {config.retriever_top_k}")
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Build: MLflow Trace記録
+# MAGIC
+# MAGIC RAGチェーンを実行し、MLflow Trace UIで確認できるようにトレースを記録します。
 
 # COMMAND ----------
 
-# MLflow Trace UI用にチェーンを実行してトレースを記録（Build）
 with mlflow.start_run(run_name="commuting-allowance-rag-chain"):
-    # チェーンの設定とパラメータをログ
     mlflow.log_params({
         "llm_model_serving_endpoint_name": chain_config["llm_model_serving_endpoint_name"],
         "vector_search_endpoint_name": chain_config["vector_search_endpoint_name"],
@@ -112,23 +155,16 @@ with mlflow.start_run(run_name="commuting-allowance-rag-chain"):
     mlflow.set_tag("model_type", "chat_completion")
     mlflow.set_tag("chain_type", "retrieval_chain")
     
-    # チェーン設定をアーティファクトとして保存
     mlflow.log_dict(chain_config, "chain_config.json")
     
-    # MLflow Trace UI用にチェーンを実行（MLflow 2.14.0+では自動的にトレースが記録される）
-    print("Executing RAG chain...")
-    
-    # MLflow LangChain autologを有効化（MLflow 2.14.0+の場合）
     try:
         mlflow.langchain.autolog()
     except AttributeError:
-        print("Note: Traces will be recorded when the chain is invoked.")
+        pass
     
-    # チェーンを実行してトレースを記録（Buildの一部）
     trace_question = "通勤手当はいくらまで支給されますか？"
     trace_result = rag_chain.invoke({"input": trace_question})
     
-    # トレース結果をログ
     context_docs = trace_result.get("context", [])
     mlflow.log_dict({
         "question": trace_question,
@@ -139,23 +175,38 @@ with mlflow.start_run(run_name="commuting-allowance-rag-chain"):
     print(f"Trace recorded. Run ID: {mlflow.active_run().info.run_id}")
 
 # COMMAND ----------
-# Unity Catalogに接続
-mlflow.set_registry_uri("databricks-uc")
 
-# Unity Catalogモデル名
-UC_MODEL_NAME = f"{config.catalog}.{config.schema}.commuting_allowance_rag_agent"
+# MAGIC %md
+# MAGIC ## Deploy: Unity Catalog設定
 
 # COMMAND ----------
 
-# エージェントをMLflowにログ
-# mlflow.pyfunc.log_modelを使用
+mlflow.set_registry_uri("databricks-uc")
+UC_MODEL_NAME = f"{config.catalog}.{config.schema}.commuting_allowance_rag_agent"
+print(f"Model name: {UC_MODEL_NAME}")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## リソース定義
+# MAGIC
+# MAGIC モデルサービング環境で必要なリソース（LLMエンドポイント、Vector Searchインデックス）を定義します。
+
+# COMMAND ----------
+
 from mlflow.models.resources import DatabricksServingEndpoint, DatabricksVectorSearchIndex
 
-# リソース定義（LLMエンドポイントとVector Searchインデックス）
 resources = [
     DatabricksServingEndpoint(endpoint_name=chain_config["llm_model_serving_endpoint_name"]),
     DatabricksVectorSearchIndex(index_name=chain_config["vector_search_index"])
 ]
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## ChatAgentモデルのログ
+
+# COMMAND ----------
 
 with mlflow.start_run(run_name="commuting-allowance-rag-agent"):
     with open("requirements.txt", "r") as f:
@@ -164,14 +215,13 @@ with mlflow.start_run(run_name="commuting-allowance-rag-agent"):
     logged_model_info = mlflow.pyfunc.log_model(
         name="agent",
         python_model="agent.py",
-        code_paths=["rag_config.py"],  # rag_config.pyを含める
+        code_paths=["rag_config.py"],
         pip_requirements=pip_requirements,
         resources=resources,
     )
     
     print(f"Agent logged: {logged_model_info.model_uri}")
     
-    # パラメータとタグをログ
     mlflow.log_params({
         "llm_model_serving_endpoint_name": chain_config["llm_model_serving_endpoint_name"],
         "vector_search_endpoint_name": chain_config["vector_search_endpoint_name"],
@@ -193,7 +243,11 @@ with mlflow.start_run(run_name="commuting-allowance-rag-agent"):
 
 # COMMAND ----------
 
-# Unity Catalogにモデルを登録
+# MAGIC %md
+# MAGIC ## Unity Catalogへのモデル登録
+
+# COMMAND ----------
+
 uc_registered_model_info = mlflow.register_model(
     model_uri=logged_model_info.model_uri,
     name=UC_MODEL_NAME
@@ -203,29 +257,29 @@ print(f"Model registered: {UC_MODEL_NAME} v{uc_registered_model_info.version}")
 
 # COMMAND ----------
 
-# エージェントをモデルサービングにデプロイ
+# MAGIC %md
+# MAGIC ## モデルサービングエンドポイントへのデプロイ
+
+# COMMAND ----------
+
 from databricks import agents
 from databricks.sdk import WorkspaceClient
 
-print(f"Deploying: {UC_MODEL_NAME} v{uc_registered_model_info.version} to commuting-allowance-rag-agent-endpoint")
+endpoint_name = "commuting-allowance-rag-agent-endpoint"
+print(f"Deploying: {UC_MODEL_NAME} v{uc_registered_model_info.version} to {endpoint_name}")
 
 try:
     deployment_info = agents.deploy(
         model_name=UC_MODEL_NAME,
         model_version=uc_registered_model_info.version,
-        endpoint_name="commuting-allowance-rag-agent-endpoint"
+        endpoint_name=endpoint_name
     )
     
     print(f"Agent deployed: {deployment_info}")
     
     w = WorkspaceClient()
-    endpoint_name = "commuting-allowance-rag-agent-endpoint"
-    
-    try:
-        endpoint = w.serving_endpoints.get(endpoint_name)
-        print(f"Endpoint: {endpoint_name}, State: {endpoint.state}")
-    except Exception as e:
-        print(f"Could not retrieve endpoint info: {e}")
+    endpoint = w.serving_endpoints.get(endpoint_name)
+    print(f"Endpoint: {endpoint_name}, State: {endpoint.state}")
         
 except Exception as e:
     print(f"Deploy error: {e}")
@@ -236,13 +290,9 @@ except Exception as e:
 # MAGIC %md
 # MAGIC ## エージェントのテスト
 # MAGIC
-# MAGIC デプロイされたエージェントをテストします。
+# MAGIC デプロイされたエージェントをテストします。Playgroundでも同様にテストできます。
 
 # COMMAND ----------
-
-# エージェントをテスト（オプション）
-# エンドポイントが準備できるまで少し待つ必要がある場合があります
-import time
 
 endpoint_name = "commuting-allowance-rag-agent-endpoint"
 try:
