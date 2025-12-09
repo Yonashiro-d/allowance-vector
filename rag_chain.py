@@ -226,7 +226,6 @@ with mlflow.start_run(run_name="commuting-allowance-rag-agent"):
         pip_requirements=pip_requirements,
         resources=resources,
         input_example=input_example,
-        example_no_conversion=True,
     )
     
     print(f"Agent logged: {logged_model_info.model_uri}")
