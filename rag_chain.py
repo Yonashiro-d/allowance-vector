@@ -35,6 +35,7 @@ dbutils.library.restartPython()
 # COMMAND ----------
 
 from typing import Any
+import uuid
 from pyspark.sql import SparkSession
 import mlflow
 
@@ -210,6 +211,9 @@ with mlflow.start_run(run_name="commuting-allowance-rag-agent"):
     with open("requirements.txt", "r") as f:
         pip_requirements = [line.strip() for line in f if line.strip() and not line.startswith("#")]
     
+    from agent import AGENT
+    from mlflow.types.agent import ChatAgentMessage
+    
     input_example = {
         "messages": [
             {
@@ -219,13 +223,31 @@ with mlflow.start_run(run_name="commuting-allowance-rag-agent"):
         ]
     }
     
+    test_messages = [
+        ChatAgentMessage(
+            id=str(uuid.uuid4()),
+            role="user",
+            content="通勤手当はいくらまで支給されますか？"
+        )
+    ]
+    
+    test_output = AGENT.predict(test_messages)
+    
+    from mlflow.models import infer_signature
+    
+    signature = infer_signature(
+        model_input=input_example,
+        model_output=test_output.model_dump()
+    )
+    
     logged_model_info = mlflow.pyfunc.log_model(
         name="agent",
-        python_model="agent.py",
+        python_model=AGENT,
         code_paths=["rag_config.py"],
         pip_requirements=pip_requirements,
         resources=resources,
         input_example=input_example,
+        signature=signature,
     )
     
     print(f"Agent logged: {logged_model_info.model_uri}")

@@ -139,4 +139,3 @@ class RAGChatAgent(ChatAgent):
 
 
 AGENT = RAGChatAgent()
-mlflow.models.set_model(AGENT)
