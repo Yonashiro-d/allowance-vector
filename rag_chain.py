@@ -30,9 +30,8 @@ from databricks_langchain import ChatDatabricks, DatabricksVectorSearch
 from langchain_huggingface import HuggingFaceEmbeddings
 
 config = RAGConfig()
-VECTOR_SEARCH_ENDPOINT = "databricks-bge-large-en-endpoint"
 
-print(f"Config: catalog={config.catalog}, schema={config.schema}, llm={config.llm_endpoint}")
+print(f"Config: catalog={config.catalog}, schema={config.schema}, table={config.delta_table_name}, index={config.vector_index_name}, llm={config.llm_endpoint}")
 
 # COMMAND ----------
 
@@ -43,7 +42,7 @@ print(f"Config: catalog={config.catalog}, schema={config.schema}, llm={config.ll
 
 chain_config = {
     "llm_model_serving_endpoint_name": config.llm_endpoint,
-    "vector_search_endpoint_name": VECTOR_SEARCH_ENDPOINT,
+    "vector_search_endpoint_name": config.vector_search_endpoint,
     "vector_search_index": config.vector_index_name,
     "llm_prompt_template": """あなたは質問に答えるアシスタントです。取得したコンテキストの内容をもとに質問に答えてください。一部のコンテキストが無関係な場合、それを回答に利用しないでください。
 
@@ -100,6 +99,7 @@ with mlflow.start_run(run_name="commuting-allowance-rag-chain"):
         "llm_model_serving_endpoint_name": chain_config["llm_model_serving_endpoint_name"],
         "vector_search_endpoint_name": chain_config["vector_search_endpoint_name"],
         "vector_search_index": chain_config["vector_search_index"],
+        "delta_table_name": config.delta_table_name,
         "query_embedding_model": config.query_embedding_model,
         "retriever_top_k": config.retriever_top_k,
         "catalog": config.catalog,
@@ -175,6 +175,7 @@ with mlflow.start_run(run_name="commuting-allowance-rag-agent"):
         "llm_model_serving_endpoint_name": chain_config["llm_model_serving_endpoint_name"],
         "vector_search_endpoint_name": chain_config["vector_search_endpoint_name"],
         "vector_search_index": chain_config["vector_search_index"],
+        "delta_table_name": config.delta_table_name,
         "query_embedding_model": config.query_embedding_model,
         "retriever_top_k": config.retriever_top_k,
         "catalog": config.catalog,
