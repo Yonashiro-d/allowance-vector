@@ -149,11 +149,12 @@ UC_MODEL_NAME = f"{config.catalog}.{config.schema}.commuting_allowance_rag_agent
 
 # エージェントをMLflowにログ
 # mlflow.pyfunc.log_modelを使用
-from mlflow.models.resources import DatabricksServingEndpoint
+from mlflow.models.resources import DatabricksServingEndpoint, DatabricksVectorSearchIndex
 
-# リソース定義（LLMエンドポイント）
+# リソース定義（LLMエンドポイントとVector Searchインデックス）
 resources = [
-    DatabricksServingEndpoint(endpoint_name=chain_config["llm_model_serving_endpoint_name"])
+    DatabricksServingEndpoint(endpoint_name=chain_config["llm_model_serving_endpoint_name"]),
+    DatabricksVectorSearchIndex(index_name=chain_config["vector_search_index"])
 ]
 
 with mlflow.start_run(run_name="commuting-allowance-rag-agent"):
