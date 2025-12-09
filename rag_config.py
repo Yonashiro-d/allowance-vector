@@ -23,9 +23,11 @@ class RAGConfig:
             "QUERY_EMBEDDING_MODEL",
             "cl-nagoya/ruri-v3-310m"
         )
+        # LLMエンドポイント（Foundation Model APIエンドポイント）
+        # 環境変数LLM_ENDPOINTが設定されていない場合は、通常のエンドポイントを使用
         self.llm_endpoint = llm_endpoint or os.environ.get(
             "LLM_ENDPOINT",
-            "databricks-meta-llama-3-1-405b-instruct"
+            "databricks-llama-4-maverick"  # 通常のFoundation Model APIエンドポイント
         )
         self.serving_endpoint_name = serving_endpoint_name or os.environ.get(
             "SERVING_ENDPOINT_NAME",

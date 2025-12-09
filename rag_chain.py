@@ -32,13 +32,7 @@ from langchain_huggingface import HuggingFaceEmbeddings
 config = RAGConfig()
 VECTOR_SEARCH_ENDPOINT = "databricks-bge-large-en-endpoint"
 
-print(f"CATALOG: {config.catalog}")
-print(f"SCHEMA: {config.schema}")
-print(f"VECTOR_INDEX_NAME: {config.vector_index_name}")
-print(f"VECTOR_SEARCH_ENDPOINT: {VECTOR_SEARCH_ENDPOINT}")
-print(f"QUERY_EMBEDDING_MODEL: {config.query_embedding_model}")
-print(f"LLM_ENDPOINT: {config.llm_endpoint}")
-print(f"RETRIEVER_TOP_K: {config.retriever_top_k}")
+print(f"Config: catalog={config.catalog}, schema={config.schema}, llm={config.llm_endpoint}")
 
 # COMMAND ----------
 
@@ -59,9 +53,7 @@ chain_config = {
 質問: {input}""",
 }
 
-print("Chain Config:")
-for key, value in chain_config.items():
-    print(f"  {key}: {value}")
+print("Chain config:", chain_config)
 
 # COMMAND ----------
 
@@ -89,17 +81,10 @@ def build_rag_chain(chain_config, config):
     return rag_chain, retriever, vector_store
 
 rag_chain, retriever, vector_store = build_rag_chain(chain_config, config)
-print("RAG Chain created successfully")
+print("RAG chain created")
 
 # VectorStoreRetrieverの情報を表示
-print("\n=== VectorStoreRetriever Information ===")
-print(f"Retriever Type: {type(retriever).__name__}")
-print(f"Vector Store Type: {type(vector_store).__name__}")
-print(f"Index Name: {chain_config['vector_search_index']}")
-print(f"Top K: {config.retriever_top_k}")
-print(f"Text Column: chunked_text")
-print(f"Columns: ['chunk_id', 'chunked_text']")
-print("=" * 40)
+print(f"Retriever: {type(retriever).__name__}, Index: {chain_config['vector_search_index']}, Top K: {config.retriever_top_k}")
 
 # COMMAND ----------
 
@@ -131,14 +116,13 @@ with mlflow.start_run(run_name="commuting-allowance-rag-chain"):
     mlflow.log_dict(chain_config, "chain_config.json")
     
     # MLflow Trace UI用にチェーンを実行（MLflow 2.14.0+では自動的にトレースが記録される）
-    print("Executing RAG chain for MLflow Trace UI...")
+    print("Executing RAG chain...")
     
     # MLflow LangChain autologを有効化（MLflow 2.14.0+の場合）
     try:
         mlflow.langchain.autolog()
     except AttributeError:
-        print("Note: mlflow.langchain.autolog() is not available in this MLflow version.")
-        print("Traces will still be recorded when the chain is invoked.")
+        print("Note: Traces will be recorded when the chain is invoked.")
     
     # チェーンを実行してトレースを記録（Buildの一部）
     trace_question = "通勤手当はいくらまで支給されますか？"
@@ -152,9 +136,7 @@ with mlflow.start_run(run_name="commuting-allowance-rag-chain"):
         "context_documents_count": len(context_docs)
     }, "chain_trace_result.json")
     
-    print("✅ MLflow Trace recorded successfully")
-    print(f"Run ID: {mlflow.active_run().info.run_id}")
-    print("💡 You can view the trace in MLflow UI under the 'Traces' tab")
+    print(f"Trace recorded. Run ID: {mlflow.active_run().info.run_id}")
 
 # COMMAND ----------
 # Unity Catalogに接続
@@ -181,11 +163,12 @@ with mlflow.start_run(run_name="commuting-allowance-rag-agent"):
     logged_model_info = mlflow.pyfunc.log_model(
         name="agent",
         python_model="agent.py",
+        code_paths=["rag_config.py"],  # rag_config.pyを含める
         pip_requirements=pip_requirements,
         resources=resources,
     )
     
-    print(f"✅ Agent logged: {logged_model_info.model_uri}")
+    print(f"Agent logged: {logged_model_info.model_uri}")
     
     # パラメータとタグをログ
     mlflow.log_params({
@@ -214,8 +197,7 @@ uc_registered_model_info = mlflow.register_model(
     name=UC_MODEL_NAME
 )
 
-print(f"✅ Model registered to Unity Catalog: {UC_MODEL_NAME}")
-print(f"   Version: {uc_registered_model_info.version}")
+print(f"Model registered: {UC_MODEL_NAME} v{uc_registered_model_info.version}")
 
 # COMMAND ----------
 
@@ -223,10 +205,7 @@ print(f"   Version: {uc_registered_model_info.version}")
 from databricks import agents
 from databricks.sdk import WorkspaceClient
 
-print(f"Deploying agent to serving endpoint...")
-print(f"  Model: {UC_MODEL_NAME}")
-print(f"  Version: {uc_registered_model_info.version}")
-print(f"  Endpoint: commuting-allowance-rag-agent-endpoint")
+print(f"Deploying: {UC_MODEL_NAME} v{uc_registered_model_info.version} to commuting-allowance-rag-agent-endpoint")
 
 try:
     deployment_info = agents.deploy(
@@ -235,43 +214,19 @@ try:
         endpoint_name="commuting-allowance-rag-agent-endpoint"
     )
     
-    print(f"✅ Agent deployed successfully!")
-    print(f"   Deployment info: {deployment_info}")
+    print(f"Agent deployed: {deployment_info}")
     
-    # エンドポイント情報を取得
     w = WorkspaceClient()
     endpoint_name = "commuting-allowance-rag-agent-endpoint"
     
     try:
         endpoint = w.serving_endpoints.get(endpoint_name)
-        endpoint_url = f"{w.config.host}/serving-endpoints/{endpoint_name}/invocations"
-        
-        print(f"\n=== Endpoint Information ===")
-        print(f"Endpoint Name: {endpoint_name}")
-        print(f"Endpoint URL: {endpoint_url}")
-        print(f"Endpoint State: {endpoint.state}")
-        print(f"\n💡 You can now use the agent in Databricks Playground!")
-        print(f"💡 Review App and API endpoint are available")
-        print(f"\n📝 Test the agent:")
-        print(f"   from databricks.sdk import WorkspaceClient")
-        print(f"   w = WorkspaceClient()")
-        print(f"   client = w.serving_endpoints.get_open_ai_client()")
-        print(f"   response = client.chat.completions.create(")
-        print(f"       model=\"{endpoint_name}\",")
-        print(f"       messages=[{{\"role\": \"user\", \"content\": \"通勤手当はいくらまで支給されますか？\"}}]")
-        print(f"   )")
-        print(f"   print(response.choices[0].message.content)")
+        print(f"Endpoint: {endpoint_name}, State: {endpoint.state}")
     except Exception as e:
-        print(f"⚠️ Could not retrieve endpoint information: {e}")
-        print(f"💡 Please check the Databricks UI for the endpoint details")
+        print(f"Could not retrieve endpoint info: {e}")
         
 except Exception as e:
-    print(f"❌ Error deploying agent: {e}")
-    print(f"\nTroubleshooting steps:")
-    print(f"1. Check if the model is correctly registered in Unity Catalog")
-    print(f"2. Verify model version: {uc_registered_model_info.version}")
-    print(f"3. Check if endpoint name 'commuting-allowance-rag-agent-endpoint' is available")
-    print(f"4. Verify permissions for model serving")
+    print(f"Deploy error: {e}")
     raise
 
 # COMMAND ----------
@@ -288,39 +243,18 @@ except Exception as e:
 import time
 
 endpoint_name = "commuting-allowance-rag-agent-endpoint"
-print(f"Testing agent endpoint: {endpoint_name}")
-
 try:
     w = WorkspaceClient()
-    
-    # エンドポイントの状態を確認
     endpoint = w.serving_endpoints.get(endpoint_name)
-    print(f"Endpoint state: {endpoint.state}")
     
     if endpoint.state.get("ready") == "READY":
-        # OpenAI互換クライアントを取得
         client = w.serving_endpoints.get_open_ai_client()
-        
-        # テストクエリ
-        test_messages = [
-            {"role": "user", "content": "通勤手当はいくらまで支給されますか？"}
-        ]
-        
-        print(f"\nSending test query: {test_messages[0]['content']}")
         response = client.chat.completions.create(
             model=endpoint_name,
-            messages=test_messages
+            messages=[{"role": "user", "content": "通勤手当はいくらまで支給されますか？"}]
         )
-        
-        print(f"\n✅ Agent response:")
-        print(f"   {response.choices[0].message.content}")
+        print(f"Test response: {response.choices[0].message.content}")
     else:
-        print(f"⚠️ Endpoint is not ready yet. State: {endpoint.state}")
-        print(f"💡 Please wait a few minutes and test manually in Databricks Playground")
-        
+        print(f"Endpoint not ready: {endpoint.state}")
 except Exception as e:
-    print(f"⚠️ Could not test endpoint automatically: {e}")
-    print(f"💡 You can test the agent manually:")
-    print(f"   1. Go to Databricks UI > Serving > {endpoint_name}")
-    print(f"   2. Click 'Open in Playground'")
-    print(f"   3. Send a test message: '通勤手当はいくらまで支給されますか？'")
+    print(f"Test error: {e}")
