@@ -175,7 +175,7 @@ def get_pdf_path(data_path: str = None, pdf_path: str = None) -> str:
 
 # COMMAND ----------
 
-# フルパスを指定する場合
+# フルパスを直接指定する場合
 pdf_path = get_pdf_path(pdf_path="/Workspace/Users/toshimitsu-yu@itec.hankyu-hanshin.co.jp/allowance-vector/通勤手当支給規程（2024-04-01）.pdf")
 print(f"PDF path: {pdf_path}")
 
@@ -187,27 +187,15 @@ print(f"PDF path: {pdf_path}")
 # COMMAND ----------
 
 from pypdf import PdfReader
-import os
 
 if pdf_path.startswith("/Workspace/Repos/"):
     pdf_path = pdf_path.replace("/Workspace/Repos/", "/dbfs/Repos/")
 elif pdf_path.startswith("/Workspace/"):
-    temp_file = f"/dbfs/tmp/{os.path.basename(pdf_path)}"
-    dbutils.fs.cp(f"file:{pdf_path}", f"dbfs://{temp_file}")
-    pdf_path = temp_file
-
-if not pdf_path.startswith("/dbfs/"):
-    raise ValueError(f"PDF path must be accessible via /dbfs/. Current path: {pdf_path}")
-
-if not os.path.exists(pdf_path):
-    raise FileNotFoundError(f"PDF file not found: {pdf_path}")
+    pdf_path = f"/dbfs{pdf_path}"
 
 with open(pdf_path, "rb") as f:
     reader = PdfReader(f)
     raw_text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
-
-if pdf_path.startswith("/dbfs/tmp/"):
-    dbutils.fs.rm(f"dbfs://{pdf_path}")
 
 print(f"Extracted text: {len(raw_text)} characters, {len(reader.pages)} pages")
 
