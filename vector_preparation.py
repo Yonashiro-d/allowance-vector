@@ -193,7 +193,7 @@ if pdf_path.startswith("/Workspace/Repos/"):
     pdf_path = pdf_path.replace("/Workspace/Repos/", "/dbfs/Repos/")
 elif pdf_path.startswith("/Workspace/"):
     temp_file = f"/dbfs/tmp/{os.path.basename(pdf_path)}"
-    dbutils.fs.cp(pdf_path, f"dbfs://{temp_file}")
+    dbutils.fs.cp(f"file:{pdf_path}", f"dbfs://{temp_file}")
     pdf_path = temp_file
 
 if not pdf_path.startswith("/dbfs/"):
