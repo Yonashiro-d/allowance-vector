@@ -150,8 +150,6 @@ class RAGChatAgent(ChatAgent):
             )
 
 
-# Create the agent object, and specify it as the agent object to use when
-# loading the agent back for inference via mlflow.models.set_model()
-mlflow.langchain.autolog()
+# Create the agent object
+# Note: mlflow.models.set_model() is called in agent_model.py
 AGENT = RAGChatAgent()
-mlflow.models.set_model(AGENT)

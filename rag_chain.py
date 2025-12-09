@@ -218,8 +218,6 @@ with mlflow.start_run(run_name="commuting-allowance-rag-agent"):
     with open("requirements.txt", "r") as f:
         pip_requirements = [line.strip() for line in f if line.strip() and not line.startswith("#")]
     
-    from agent import AGENT
-    
     input_example = {
         "messages": [
             {
@@ -231,8 +229,8 @@ with mlflow.start_run(run_name="commuting-allowance-rag-agent"):
     
     logged_model_info = mlflow.pyfunc.log_model(
         name="agent",
-        python_model=AGENT,
-        code_paths=["rag_config.py"],
+        python_model="agent_model.py",
+        code_paths=["agent.py", "rag_config.py"],
         pip_requirements=pip_requirements,
         resources=resources,
         input_example=input_example,
