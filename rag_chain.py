@@ -228,12 +228,13 @@ with mlflow.start_run(run_name="commuting-allowance-rag-agent"):
     }
     
     logged_model_info = mlflow.pyfunc.log_model(
-        name="agent",
+        artifact_path="agent",
         python_model="agent_model.py",
         code_paths=["agent.py", "rag_config.py"],
         pip_requirements=pip_requirements,
         resources=resources,
         input_example=input_example,
+        example_no_conversion=True,
     )
     
     print(f"Agent logged: {logged_model_info.model_uri}")
