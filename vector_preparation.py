@@ -188,17 +188,17 @@ print(f"PDF path: {pdf_path}")
 from pypdf import PdfReader
 import os
 
-if pdf_path.startswith("/Workspace/"):
-    temp_file = f"/dbfs/tmp/{os.path.basename(pdf_path)}"
-    dbutils.fs.cp(pdf_path, f"dbfs://{temp_file}")
-    pdf_path = temp_file
+if pdf_path.startswith("/Workspace/Repos/"):
+    pdf_path = pdf_path.replace("/Workspace/Repos/", "/dbfs/Repos/")
+elif pdf_path.startswith("/Workspace/"):
+    pdf_path = pdf_path.replace("/Workspace/", "/dbfs/Workspace/")
+
+if not os.path.exists(pdf_path):
+    raise FileNotFoundError(f"PDF file not found: {pdf_path}")
 
 with open(pdf_path, "rb") as f:
     reader = PdfReader(f)
     raw_text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
-
-if pdf_path.startswith("/dbfs/tmp/"):
-    dbutils.fs.rm(f"dbfs://{pdf_path}")
 
 print(f"Extracted text: {len(raw_text)} characters, {len(reader.pages)} pages")
 
