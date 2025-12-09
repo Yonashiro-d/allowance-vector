@@ -17,42 +17,54 @@ from databricks_langchain import ChatDatabricks, DatabricksVectorSearch
 from langchain_huggingface import HuggingFaceEmbeddings
 from rag_config import RAGConfig
 
+############################################
+# RAG設定の読み込み
+############################################
+config = RAGConfig()
 
-class RAGChatAgent(ChatAgent):
-    def __init__(self) -> None:
-        self.config = RAGConfig()
-        self.rag_chain: Optional[Any] = None
+############################################
+# RAGチェーン構築関数
+############################################
+def create_rag_chain(config: RAGConfig) -> Any:
+    embedding_model = HuggingFaceEmbeddings(model_name=config.query_embedding_model)
     
-    def _ensure_rag_chain_initialized(self) -> None:
-        if self.rag_chain is None:
-            self._initialize_rag_chain()
+    vector_store = DatabricksVectorSearch(
+        index_name=config.vector_index_name,
+        embedding=embedding_model,
+        text_column="chunked_text"
+    )
     
-    def _initialize_rag_chain(self) -> None:
-        embedding_model = HuggingFaceEmbeddings(model_name=self.config.query_embedding_model)
-        
-        vector_store = DatabricksVectorSearch(
-            index_name=self.config.vector_index_name,
-            embedding=embedding_model,
-            text_column="chunked_text"
-        )
-        
-        llm = ChatDatabricks(
-            endpoint=self.config.llm_endpoint,
-            extra_params={"temperature": 0.1}
-        )
-        
-        retriever = vector_store.as_retriever(search_kwargs={"k": self.config.retriever_top_k})
-        
-        prompt_template = """あなたは質問に答えるアシスタントです。取得したコンテキストの内容をもとに質問に答えてください。一部のコンテキストが無関係な場合、それを回答に利用しないでください。
+    llm = ChatDatabricks(
+        endpoint=config.llm_endpoint,
+        extra_params={"temperature": 0.1}
+    )
+    
+    retriever = vector_store.as_retriever(search_kwargs={"k": config.retriever_top_k})
+    
+    prompt_template = """あなたは質問に答えるアシスタントです。取得したコンテキストの内容をもとに質問に答えてください。一部のコンテキストが無関係な場合、それを回答に利用しないでください。
 
 コンテキスト:
 {context}
 
 質問: {input}"""
-        prompt = ChatPromptTemplate.from_template(prompt_template)
-        
-        document_chain = create_stuff_documents_chain(llm, prompt)
-        self.rag_chain = create_retrieval_chain(retriever, document_chain)
+    prompt = ChatPromptTemplate.from_template(prompt_template)
+    
+    document_chain = create_stuff_documents_chain(llm, prompt)
+    rag_chain = create_retrieval_chain(retriever, document_chain)
+    
+    return rag_chain
+
+#####################
+## ChatAgentクラスの定義
+#####################
+class RAGChatAgent(ChatAgent):
+    def __init__(self) -> None:
+        self.config = config
+        self.rag_chain: Optional[Any] = None
+    
+    def _ensure_rag_chain_initialized(self) -> None:
+        if self.rag_chain is None:
+            self.rag_chain = create_rag_chain(self.config)
     
     def _extract_user_message(self, messages: list[ChatAgentMessage]) -> str:
         for message in reversed(messages):
@@ -138,4 +150,8 @@ class RAGChatAgent(ChatAgent):
             )
 
 
+# Create the agent object, and specify it as the agent object to use when
+# loading the agent back for inference via mlflow.models.set_model()
+mlflow.langchain.autolog()
 AGENT = RAGChatAgent()
+mlflow.models.set_model(AGENT)

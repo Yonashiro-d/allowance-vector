@@ -5,6 +5,7 @@ databricks-agents
 # LangChain (Core - RAG chain用)
 langchain==0.3.27
 langchain-core==0.3.75
+langchain-community
 langchain-huggingface==0.3.1
 
 # Databricks Libraries
@@ -24,6 +25,3 @@ numpy==1.26.4
 
 # Data Processing (MLflowが内部的に使用)
 pandas==2.2.3
-
-# Document Processing (vector_preparation.py用)
-pypdf==6.0.0
