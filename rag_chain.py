@@ -99,9 +99,7 @@ def build_rag_chain(chain_config: dict[str, Any], config: RAGConfig) -> tuple[An
     
     vector_store = DatabricksVectorSearch(
         index_name=chain_config["vector_search_index"],
-        embedding=embedding_model,
-        text_column="chunked_text",
-        columns=["chunk_id", "chunked_text"]
+        embedding=embedding_model
     )
     
     llm = ChatDatabricks(
