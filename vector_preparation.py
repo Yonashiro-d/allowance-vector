@@ -173,15 +173,21 @@ def get_pdf_path(data_path: str = None, pdf_path: str = None) -> str:
 # MAGIC %md
 # MAGIC ## PDFパスの指定
 # MAGIC
-# MAGIC PDFファイルは`/dbfs/FileStore/`配下に配置してください。
+# MAGIC 以下のいずれかの方法でPDFファイルのパスを指定できます：
+# MAGIC 1. `/dbfs/FileStore/`配下のPDFファイルを直接指定（推奨）
+# MAGIC 2. `get_pdf_path()`関数で自動検出（Repos配下の場合）
+# MAGIC 3. フルパスを指定（`/Workspace/Users/`配下の場合は一時コピーが必要）
 
 # COMMAND ----------
 
-# /dbfs/FileStore/配下のPDFファイルを直接指定
-pdf_path = "/dbfs/FileStore/allowance-vector/通勤手当支給規程（2024-04-01）.pdf"
+# 方法1: /dbfs/FileStore/配下のPDFファイルを直接指定
+# pdf_path = "/dbfs/FileStore/allowance-vector/通勤手当支給規程（2024-04-01）.pdf"
 
-# または、get_pdf_path関数で自動検出（Repos配下の場合）
-# pdf_path = get_pdf_path()
+# 方法2: get_pdf_path関数で自動検出（Repos配下の場合）
+pdf_path = get_pdf_path()
+
+# 方法3: フルパスを指定（/Workspace/Users/配下の場合）
+# pdf_path = get_pdf_path(pdf_path="/Workspace/Users/toshimitsu-yu@itec.hankyu-hanshin.co.jp/allowance-vector/通勤手当支給規程（2024-04-01）.pdf")
 
 print(f"PDF path: {pdf_path}")
 
@@ -197,6 +203,15 @@ import os
 
 if pdf_path.startswith("/Workspace/Repos/"):
     pdf_path = pdf_path.replace("/Workspace/Repos/", "/dbfs/Repos/")
+elif pdf_path.startswith("/Workspace/"):
+    temp_file = f"/dbfs/tmp/{os.path.basename(pdf_path)}"
+    try:
+        copy_result = dbutils.fs.cp(f"file:{pdf_path}", f"dbfs://{temp_file}")
+        if not copy_result:
+            raise FileNotFoundError(f"Failed to copy PDF from {pdf_path} to {temp_file}")
+        pdf_path = temp_file
+    except Exception as e:
+        raise FileNotFoundError(f"Failed to copy PDF from {pdf_path} to {temp_file}: {e}")
 
 if not os.path.exists(pdf_path):
     raise FileNotFoundError(f"PDF file not found: {pdf_path}")
@@ -204,6 +219,12 @@ if not os.path.exists(pdf_path):
 with open(pdf_path, "rb") as f:
     reader = PdfReader(f)
     raw_text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
+
+if pdf_path.startswith("/dbfs/tmp/"):
+    try:
+        dbutils.fs.rm(f"dbfs://{pdf_path}")
+    except Exception:
+        pass
 
 print(f"Extracted text: {len(raw_text)} characters, {len(reader.pages)} pages")
 
