@@ -192,40 +192,14 @@ print(f"PDF path: {pdf_path}")
 
 # COMMAND ----------
 
-from pypdf import PdfReader
-import os
-import time
+from langchain_community.document_loaders import PyPDFLoader
 
-if pdf_path.startswith("/Workspace/Repos/"):
-    pdf_path = pdf_path.replace("/Workspace/Repos/", "/dbfs/Repos/")
-    with open(pdf_path, "rb") as f:
-        reader = PdfReader(f)
-        raw_text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
-elif pdf_path.startswith("/Workspace/"):
-    temp_file = f"/tmp/{os.path.basename(pdf_path)}"
-    try:
-        copy_result = dbutils.fs.cp(f"file:{pdf_path}", f"file:{temp_file}")
-        if not copy_result:
-            raise FileNotFoundError(f"Failed to copy PDF from {pdf_path} to {temp_file}")
-        time.sleep(1)
-        if not os.path.exists(temp_file):
-            raise FileNotFoundError(f"PDF file not found after copy: {temp_file}")
-        with open(temp_file, "rb") as f:
-            reader = PdfReader(f)
-            raw_text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
-        os.remove(temp_file)
-    except Exception as e:
-        raise FileNotFoundError(f"Failed to read PDF from {pdf_path}: {e}")
-elif pdf_path.startswith("/dbfs/"):
-    with open(pdf_path, "rb") as f:
-        reader = PdfReader(f)
-        raw_text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
-else:
-    with open(pdf_path, "rb") as f:
-        reader = PdfReader(f)
-        raw_text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
+loader = PyPDFLoader(pdf_path)
+documents = loader.load()
 
-print(f"Extracted text: {len(raw_text)} characters, {len(reader.pages)} pages")
+raw_text = "\n".join([doc.page_content for doc in documents if doc.page_content.strip()])
+
+print(f"Extracted text: {len(raw_text)} characters, {len(documents)} pages")
 
 # COMMAND ----------
 
