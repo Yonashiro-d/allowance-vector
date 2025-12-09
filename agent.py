@@ -1,7 +1,6 @@
 from typing import Any, Generator, Optional
 import uuid
 import re
-import os
 
 import mlflow
 from mlflow.pyfunc import ChatAgent
@@ -23,29 +22,6 @@ class RAGChatAgent(ChatAgent):
     def __init__(self) -> None:
         self.config = RAGConfig()
         self.rag_chain: Optional[Any] = None
-        self._ensure_authentication()
-    
-    def _ensure_authentication(self) -> None:
-        databricks_host = os.environ.get("DATABRICKS_HOST")
-        databricks_client_id = os.environ.get("DATABRICKS_CLIENT_ID")
-        databricks_client_secret = os.environ.get("DATABRICKS_CLIENT_SECRET")
-        
-        if not databricks_host:
-            workspace_url = os.environ.get("DATABRICKS_WORKSPACE_URL")
-            if workspace_url:
-                os.environ["DATABRICKS_HOST"] = workspace_url
-            else:
-                raise ValueError(
-                    "DATABRICKS_HOST or DATABRICKS_WORKSPACE_URL environment variable must be set. "
-                    "Please configure the endpoint with DATABRICKS_HOST environment variable. "
-                    "OAuth統合認証を使用する場合は、DATABRICKS_HOSTのみで認証が自動的に処理されます。"
-                )
-        
-        if databricks_client_id and databricks_client_secret:
-            os.environ["DATABRICKS_CLIENT_ID"] = databricks_client_id
-            os.environ["DATABRICKS_CLIENT_SECRET"] = databricks_client_secret
-        
-        os.environ.pop("DATABRICKS_TOKEN", None)
     
     def _ensure_rag_chain_initialized(self) -> None:
         if self.rag_chain is None:
