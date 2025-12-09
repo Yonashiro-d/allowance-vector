@@ -1,0 +1,29 @@
+# MLflow and Core ML Libraries
+mlflow==3.3.2
+databricks-agents
+
+# LangChain (Core - RAG chain用)
+langchain==0.3.27
+langchain-core==0.3.75
+langchain-huggingface==0.3.1
+
+# Databricks Libraries
+databricks-langchain==0.7.1
+databricks-vectorsearch==0.57
+databricks-sdk==0.65.0
+
+# Transformers and Embeddings (HuggingFaceEmbeddings用)
+sentence-transformers==5.1.0
+transformers>=4.49.0,<4.51
+tokenizers>=0.21.2,<0.22
+sentencepiece>=0.2.0,<0.3
+
+# PyTorch (sentence-transformersの依存関係)
+torch==2.4.1
+numpy==1.26.4
+
+# Data Processing (MLflowが内部的に使用)
+pandas==2.2.3
+
+# Document Processing (vector_preparation.py用)
+pypdf==6.0.0

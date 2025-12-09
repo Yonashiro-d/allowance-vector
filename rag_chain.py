@@ -6,7 +6,7 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install -U mlflow==3.3.2 langgraph==0.3.4 databricks-langchain==0.7.1 langchain==0.3.27 langchain-core==0.3.75 langchain-community==0.3.29 langgraph-supervisor==0.0.4 pandas==2.2.3 numpy==1.26.4 openpyxl==3.1.5 requests==2.32.5 databricks-vectorsearch==0.57 databricks-sdk==0.65.0 torch==2.4.1 sentence-transformers==5.1.0 "transformers>=4.49.0,<4.51" "tokenizers>=0.21.2,<0.22" google-cloud-vision==3.10.2 google-cloud-speech==2.33.0 google-auth==2.40.3 mutagen==1.47.0 langchain-huggingface==0.3.1 langchain-tavily==0.2.11 "sentencepiece>=0.2.0,<0.3" unihan-etl==0.37.0 jaconv==0.4.0 opencc-python-reimplemented==0.1.7 rapidfuzz==3.14.1 joyokanji==1.1.0 python-docx==1.2.0 pypdf==6.0.0 pillow uv fugashi ipadic unidic-lite openevals torchaudio google-genai databricks-agents httpx
+# MAGIC %pip install -r requirements.txt
 
 # COMMAND ----------
 
@@ -177,52 +177,14 @@ resources = [
 with mlflow.start_run(run_name="commuting-allowance-rag-agent"):
     # ChatAgentとしてログ（agent.pyファイルを指定）
     # ChatAgentインターフェースを使用するため、シグネチャは自動的に推論される
+    # requirements.txtから依存関係を読み込む
+    with open("requirements.txt", "r") as f:
+        pip_requirements = [line.strip() for line in f if line.strip() and not line.startswith("#")]
+    
     logged_model_info = mlflow.pyfunc.log_model(
-        artifact_path="agent",
+        name="agent",
         python_model="agent.py",
-        pip_requirements=[
-            "mlflow==3.3.2",
-            "langgraph==0.3.4",
-            "databricks-langchain==0.7.1",
-            "langchain==0.3.27",
-            "langchain-core==0.3.75",
-            "langchain-community==0.3.29",
-            "langgraph-supervisor==0.0.4",
-            "pandas==2.2.3",
-            "numpy==1.26.4",
-            "openpyxl==3.1.5",
-            "requests==2.32.5",
-            "databricks-vectorsearch==0.57",
-            "databricks-sdk==0.65.0",
-            "torch==2.4.1",
-            "sentence-transformers==5.1.0",
-            "transformers>=4.49.0,<4.51",
-            "tokenizers>=0.21.2,<0.22",
-            "google-cloud-vision==3.10.2",
-            "google-cloud-speech==2.33.0",
-            "google-auth==2.40.3",
-            "mutagen==1.47.0",
-            "langchain-huggingface==0.3.1",
-            "langchain-tavily==0.2.11",
-            "sentencepiece>=0.2.0,<0.3",
-            "unihan-etl==0.37.0",
-            "jaconv==0.4.0",
-            "opencc-python-reimplemented==0.1.7",
-            "rapidfuzz==3.14.1",
-            "joyokanji==1.1.0",
-            "python-docx==1.2.0",
-            "pypdf==6.0.0",
-            "pillow",
-            "uv",
-            "fugashi",
-            "ipadic",
-            "unidic-lite",
-            "openevals",
-            "torchaudio",
-            "google-genai",
-            "databricks-agents",
-            "httpx",
-        ],
+        pip_requirements=pip_requirements,
         resources=resources,
     )
     
