@@ -186,15 +186,19 @@ print(f"PDF path: {pdf_path}")
 # COMMAND ----------
 
 from pypdf import PdfReader
+import os
 
 if pdf_path.startswith("/Workspace/"):
-    dbfs_path = f"/dbfs{pdf_path}"
-else:
-    dbfs_path = pdf_path
+    temp_file = f"/dbfs/tmp/{os.path.basename(pdf_path)}"
+    dbutils.fs.cp(pdf_path, f"dbfs://{temp_file}")
+    pdf_path = temp_file
 
-with open(dbfs_path, "rb") as f:
+with open(pdf_path, "rb") as f:
     reader = PdfReader(f)
     raw_text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
+
+if pdf_path.startswith("/dbfs/tmp/"):
+    dbutils.fs.rm(f"dbfs://{pdf_path}")
 
 print(f"Extracted text: {len(raw_text)} characters, {len(reader.pages)} pages")
 
