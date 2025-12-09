@@ -2,9 +2,21 @@
 # MAGIC %md
 # MAGIC # ベクトルデータ準備
 # MAGIC
-# MAGIC PDFからテキストを抽出し、チャンキングしてベクトル化し、Deltaテーブルに保存します。
+# MAGIC このノートブックでは以下の処理を実行します：
+# MAGIC 1. Unity Catalog/スキーマの確認・作成
+# MAGIC 2. Vector Searchエンドポイントの確認・作成
+# MAGIC 3. PDFからテキストを抽出
+# MAGIC 4. テキストのチャンキング
+# MAGIC 5. チャンクのベクトル化
+# MAGIC 6. Deltaテーブルへの保存
+# MAGIC 7. Vector Searchインデックスの作成
 # MAGIC
 # MAGIC 参考: [genai-cookbook](https://github.com/databricks/genai-cookbook)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 依存関係のインストール
 
 # COMMAND ----------
 
@@ -12,28 +24,51 @@
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ## ライブラリの再起動
+
+# COMMAND ----------
+
 dbutils.library.restartPython()
 
 # COMMAND ----------
 
-import sys
+# MAGIC %md
+# MAGIC ## 基本インポート
+
+# COMMAND ----------
+
 import re
+import time
 from pathlib import Path
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import expr
-from sentence_transformers import SentenceTransformer
+
+spark = SparkSession.builder.getOrCreate()
+workspace_url = SparkSession.getActiveSession().conf.get("spark.databricks.workspaceUrl", None)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Databricks SDK関連のインポート
+
+# COMMAND ----------
+
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound, PermissionDenied
 from databricks.vector_search.client import VectorSearchClient
 from databricks.sdk.service.vectorsearch import EndpointType
 
-spark = SparkSession.builder.getOrCreate()
 w = WorkspaceClient()
 vsc = VectorSearchClient(disable_notice=True)
 
-workspace_url = SparkSession.getActiveSession().conf.get("spark.databricks.workspaceUrl", None)
+# COMMAND ----------
 
-# 設定
+# MAGIC %md
+# MAGIC ## 設定の定義
+
+# COMMAND ----------
+
 CATALOG = "hhhd_demo_itec"
 SCHEMA = "allowance_payment_rules"
 DELTA_TABLE_NAME = f"{CATALOG}.{SCHEMA}.commuting_allowance_vectors"
@@ -42,8 +77,9 @@ VECTOR_INDEX_NAME = f"{CATALOG}.{SCHEMA}.commuting_allowance_index"
 
 print(f"Catalog: {CATALOG}")
 print(f"Schema: {SCHEMA}")
-print(f"Table: {DELTA_TABLE_NAME}")
+print(f"Delta Table: {DELTA_TABLE_NAME}")
 print(f"Vector Search Endpoint: {VECTOR_SEARCH_ENDPOINT}")
+print(f"Vector Index: {VECTOR_INDEX_NAME}")
 
 # COMMAND ----------
 
@@ -55,24 +91,24 @@ print(f"Vector Search Endpoint: {VECTOR_SEARCH_ENDPOINT}")
 try:
     _ = w.catalogs.get(CATALOG)
     print(f"PASS: UC catalog `{CATALOG}` exists")
-except NotFound as e:
+except NotFound:
     print(f"`{CATALOG}` does not exist, trying to create...")
     try:
         _ = w.catalogs.create(name=CATALOG)
         print(f"PASS: UC catalog `{CATALOG}` created")
-    except PermissionDenied as e:
+    except PermissionDenied:
         print(f"FAIL: `{CATALOG}` does not exist, and no permissions to create. Please provide an existing UC Catalog.")
         raise ValueError(f"Unity Catalog `{CATALOG}` does not exist.")
 
 try:
     _ = w.schemas.get(full_name=f"{CATALOG}.{SCHEMA}")
     print(f"PASS: UC schema `{CATALOG}.{SCHEMA}` exists")
-except NotFound as e:
+except NotFound:
     print(f"`{CATALOG}.{SCHEMA}` does not exist, trying to create...")
     try:
         _ = w.schemas.create(name=SCHEMA, catalog_name=CATALOG)
         print(f"PASS: UC schema `{CATALOG}.{SCHEMA}` created")
-    except PermissionDenied as e:
+    except PermissionDenied:
         print(f"FAIL: `{CATALOG}.{SCHEMA}` does not exist, and no permissions to create. Please provide an existing UC Schema.")
         raise ValueError(f"Unity Catalog Schema `{CATALOG}.{SCHEMA}` does not exist.")
 
@@ -80,6 +116,8 @@ except NotFound as e:
 
 # MAGIC %md
 # MAGIC ## Vector Searchエンドポイントの確認・作成
+# MAGIC
+# MAGIC エンドポイントが存在しない場合は作成します（最大20分かかる場合があります）。
 
 # COMMAND ----------
 
@@ -94,19 +132,17 @@ print(f"PASS: Vector Search endpoint `{VECTOR_SEARCH_ENDPOINT}` exists")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## PDFを読み込んでテキストに変換
+# MAGIC ## PDFパス取得関数の定義
 
 # COMMAND ----------
 
 def get_pdf_path(data_path: str = None, pdf_path: str = None) -> str:
-    # フルパスが指定されている場合はそのまま返す
     if pdf_path:
         if not pdf_path.lower().endswith('.pdf'):
             raise ValueError(f"Specified path is not a PDF file: {pdf_path}")
         print(f"Using specified PDF path: {pdf_path}")
         return pdf_path
     
-    # パスが指定されていない場合はRepos配下のルートから自動検出
     if data_path is None:
         notebook_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebookPath().get()
         if "Repos" not in notebook_path:
@@ -132,24 +168,31 @@ def get_pdf_path(data_path: str = None, pdf_path: str = None) -> str:
     
     return pdf_files[0].path
 
-# フルパスを直接指定する場合
-pdf_path = get_pdf_path(pdf_path="/Workspace/Users/toshimitsu-yu@itec.hankyu-hanshin.co.jp/allowance-vector/通勤手当支給規程（2024-04-01）.pdf")
-# または自動検出する場合
-# pdf_path = get_pdf_path()
+# COMMAND ----------
 
+# MAGIC %md
+# MAGIC ## PDFパスの指定
+
+# COMMAND ----------
+
+pdf_path = get_pdf_path(pdf_path="/Workspace/Users/toshimitsu-yu@itec.hankyu-hanshin.co.jp/allowance-vector/通勤手当支給規程（2024-04-01）.pdf")
 print(f"PDF path: {pdf_path}")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## PDFからテキスト抽出
 
 # COMMAND ----------
 
 from pypdf import PdfReader
 
-pdf_path_1 = "通勤手当支給規程（2024-04-01）.pdf"
+if pdf_path.startswith("/Workspace/"):
+    dbfs_path = f"/dbfs{pdf_path}"
+else:
+    dbfs_path = pdf_path
 
-# PDFを読み込んでテキストに変換
-if pdf_path_1.startswith("/Workspace/"):
-    pdf_path_6 = f"/dbfs{pdf_path_1}"
-
-with open(pdf_path_1, "rb") as f:
+with open(dbfs_path, "rb") as f:
     reader = PdfReader(f)
     raw_text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
 
@@ -158,12 +201,11 @@ print(f"Extracted text: {len(raw_text)} characters, {len(reader.pages)} pages")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## チャンキング
+# MAGIC ## チャンキング関数の定義
 
 # COMMAND ----------
 
 def extract_sections(text: str) -> list:
-    """空白行で分割し、「第X条」などのタイトルを検出"""
     sections = []
     raw_sections = re.split(r'\n\s*\n+', text.strip())
     
@@ -179,7 +221,6 @@ def extract_sections(text: str) -> list:
     return sections
 
 def chunk_text(text: str) -> list:
-    """セクションをチャンクに変換"""
     text = re.sub(r'\n+', '\n', text).strip()
     sections = extract_sections(text)
     
@@ -193,13 +234,20 @@ def chunk_text(text: str) -> list:
     
     return chunks
 
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## テキストのチャンキング実行
+
+# COMMAND ----------
+
 chunked_texts = chunk_text(raw_text)
 print(f"Total chunks: {len(chunked_texts)}")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## ベクトル化
+# MAGIC ## チャンクデータの準備
 
 # COMMAND ----------
 
@@ -211,6 +259,17 @@ pdf_texts = [
     }
     for i, chunk in enumerate(chunked_texts)
 ]
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## ベクトル化
+# MAGIC
+# MAGIC SentenceTransformerを使用してチャンクをベクトル化します。
+
+# COMMAND ----------
+
+from sentence_transformers import SentenceTransformer
 
 model = SentenceTransformer("cl-nagoya/ruri-v3-310m")
 embedding_dimension = model.get_sentence_embedding_dimension()
@@ -230,7 +289,7 @@ print(f"Generated {len(embeddings)} embeddings")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Deltaテーブルに保存
+# MAGIC ## Deltaテーブルへの保存
 
 # COMMAND ----------
 
@@ -248,12 +307,19 @@ if workspace_url:
     table_name_only = DELTA_TABLE_NAME.split('.')[-1]
     print(f"View Delta Table: https://{workspace_url}/explore/data/{CATALOG}/{SCHEMA}/{table_name_only}")
 
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 保存データの確認
+
+# COMMAND ----------
+
 display(spark.sql(f"SELECT chunk_id, file_name, LENGTH(chunked_text) as text_length, SIZE(embedding) as embedding_dim FROM {DELTA_TABLE_NAME} LIMIT 5"))
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Vector Searchインデックス作成
+# MAGIC ## ベクトル次元数の取得
 
 # COMMAND ----------
 
@@ -261,18 +327,25 @@ result = spark.sql(f"SELECT SIZE(embedding) as dim FROM {DELTA_TABLE_NAME} LIMIT
 embedding_dim = result[0]['dim']
 print(f"Vector dimension: {embedding_dim}")
 
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Vector Searchインデックスの作成
+# MAGIC
+# MAGIC 既存のインデックスがある場合は削除してから新規作成します（5-10分かかる場合があります）。
+
+# COMMAND ----------
+
 print(f"Creating Vector Search Index, this will take ~5 - 10 minutes.")
 if workspace_url:
     index_name_only = VECTOR_INDEX_NAME.split('.')[-1]
     print(f"View Index Status: https://{workspace_url}/explore/data/{CATALOG}/{SCHEMA}/{index_name_only}")
 
-import time
-
 try:
     vsc.delete_index(endpoint_name=VECTOR_SEARCH_ENDPOINT, index_name=VECTOR_INDEX_NAME)
     print("Existing index deleted. Waiting for deletion to complete...")
     time.sleep(15)
-except Exception as e:
+except Exception:
     print("Index does not exist or already deleted. Proceeding with creation...")
 
 index = vsc.create_delta_sync_index_and_wait(
