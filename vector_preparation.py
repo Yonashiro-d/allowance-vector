@@ -202,25 +202,18 @@ if pdf_path.startswith("/Workspace/Repos/"):
         reader = PdfReader(f)
         raw_text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
 elif pdf_path.startswith("/Workspace/"):
-    temp_file = f"/dbfs/tmp/{os.path.basename(pdf_path)}"
+    temp_file = f"/tmp/{os.path.basename(pdf_path)}"
     try:
-        copy_result = dbutils.fs.cp(f"file:{pdf_path}", f"dbfs://{temp_file}")
+        copy_result = dbutils.fs.cp(f"file:{pdf_path}", f"file:{temp_file}")
         if not copy_result:
             raise FileNotFoundError(f"Failed to copy PDF from {pdf_path} to {temp_file}")
-        for _ in range(20):
-            time.sleep(0.5)
-            try:
-                files = dbutils.fs.ls(f"dbfs://{temp_file}")
-                if files:
-                    break
-            except Exception:
-                pass
-        else:
+        time.sleep(1)
+        if not os.path.exists(temp_file):
             raise FileNotFoundError(f"PDF file not found after copy: {temp_file}")
         with open(temp_file, "rb") as f:
             reader = PdfReader(f)
             raw_text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
-        dbutils.fs.rm(f"dbfs://{temp_file}")
+        os.remove(temp_file)
     except Exception as e:
         raise FileNotFoundError(f"Failed to read PDF from {pdf_path}: {e}")
 elif pdf_path.startswith("/dbfs/"):
