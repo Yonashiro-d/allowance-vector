@@ -20,7 +20,7 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install -U pypdf sentence-transformers sentencepiece databricks-vectorsearch databricks-sdk
+# MAGIC %pip install -U databricks-langchain langchain-community langchain databricks-sql-connector
 
 # COMMAND ----------
 
