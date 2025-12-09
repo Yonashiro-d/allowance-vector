@@ -132,53 +132,30 @@ print(f"PASS: Vector Search endpoint `{VECTOR_SEARCH_ENDPOINT}` exists")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## PDFパス取得関数の定義
+# MAGIC ## PDFファイルの検出
 
 # COMMAND ----------
 
-def get_pdf_path(data_path: str = None, pdf_path: str = None) -> str:
-    if pdf_path:
-        if not pdf_path.lower().endswith('.pdf'):
-            raise ValueError(f"Specified path is not a PDF file: {pdf_path}")
-        print(f"Using specified PDF path: {pdf_path}")
-        return pdf_path
-    
-    if data_path is None:
-        notebook_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebookPath().get()
-        if "Repos" not in notebook_path:
-            raise ValueError("Notebook must be run from Repos. Please specify data_path or pdf_path explicitly.")
-        parts = notebook_path.split("/")
-        repos_idx = parts.index("Repos")
-        data_path = f"/Workspace/Repos/{parts[repos_idx + 1]}/{parts[repos_idx + 2]}"
-        print(f"Auto-detected data_path: {data_path}")
-    
-    pdf_files = [f for f in dbutils.fs.ls(data_path) if f.name.lower().endswith('.pdf')]
-    if not pdf_files:
-        all_files = dbutils.fs.ls(data_path)
-        print(f"Files in {data_path}:")
-        for f in all_files:
-            print(f"  - {f.name} (is_dir: {f.isDir})")
-        raise FileNotFoundError(f"PDF file not found in: {data_path}")
-    
-    print(f"Found {len(pdf_files)} PDF file(s):")
-    for i, pdf in enumerate(pdf_files, 1):
-        print(f"  {i}. {pdf.name}")
-    if len(pdf_files) > 1:
-        print(f"Using first PDF: {pdf_files[0].name}")
-    
-    return pdf_files[0].path
+import os
+import glob
 
-# COMMAND ----------
+notebook_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebookPath().get()
+if "Repos" not in notebook_path:
+    raise ValueError("Notebook must be run from Repos.")
 
-# MAGIC %md
-# MAGIC ## PDFパスの指定
+parts = notebook_path.split("/")
+repos_idx = parts.index("Repos")
+repo_root = f"/dbfs/Repos/{parts[repos_idx + 1]}/{parts[repos_idx + 2]}"
 
-# COMMAND ----------
+pdf_files = glob.glob(f"{repo_root}/**/*.pdf", recursive=True)
+if not pdf_files:
+    raise FileNotFoundError(f"PDF file not found in: {repo_root}")
 
-# 自動検出（Repos配下のルートから検索）
-pdf_path = get_pdf_path()
-
-print(f"PDF path: {pdf_path}")
+pdf_path = pdf_files[0]
+if len(pdf_files) > 1:
+    print(f"Found {len(pdf_files)} PDF file(s), using: {os.path.basename(pdf_path)}")
+else:
+    print(f"Found PDF: {os.path.basename(pdf_path)}")
 
 # COMMAND ----------
 
@@ -188,24 +165,10 @@ print(f"PDF path: {pdf_path}")
 # COMMAND ----------
 
 from pypdf import PdfReader
-import os
-
-if pdf_path.startswith("/Workspace/Repos/"):
-    pdf_path = pdf_path.replace("/Workspace/Repos/", "/dbfs/Repos/")
-elif pdf_path.startswith("/Workspace/"):
-    temp_file = f"/dbfs/tmp/{os.path.basename(pdf_path)}"
-    dbutils.fs.cp(pdf_path, f"dbfs://{temp_file}")
-    pdf_path = temp_file
-
-if not os.path.exists(pdf_path):
-    raise FileNotFoundError(f"PDF file not found: {pdf_path}")
 
 with open(pdf_path, "rb") as f:
     reader = PdfReader(f)
     raw_text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
-
-if pdf_path.startswith("/dbfs/tmp/"):
-    dbutils.fs.rm(f"dbfs://{pdf_path}")
 
 print(f"Extracted text: {len(raw_text)} characters, {len(reader.pages)} pages")
 
