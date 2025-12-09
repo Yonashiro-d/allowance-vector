@@ -207,10 +207,14 @@ elif pdf_path.startswith("/Workspace/"):
         copy_result = dbutils.fs.cp(f"file:{pdf_path}", f"dbfs://{temp_file}")
         if not copy_result:
             raise FileNotFoundError(f"Failed to copy PDF from {pdf_path} to {temp_file}")
-        for _ in range(10):
+        for _ in range(20):
             time.sleep(0.5)
-            if os.path.exists(temp_file):
-                break
+            try:
+                files = dbutils.fs.ls(f"dbfs://{temp_file}")
+                if files:
+                    break
+            except Exception:
+                pass
         else:
             raise FileNotFoundError(f"PDF file not found after copy: {temp_file}")
         with open(temp_file, "rb") as f:
