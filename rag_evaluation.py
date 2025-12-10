@@ -18,22 +18,7 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install \
-# MAGIC   mlflow>=3.4.0 \
-# MAGIC   langchain==0.3.27 \
-# MAGIC   langchain-core==0.3.75 \
-# MAGIC   langchain-community \
-# MAGIC   langchain-huggingface==0.3.1 \
-# MAGIC   databricks-langchain==0.7.1 \
-# MAGIC   databricks-vectorsearch==0.57 \
-# MAGIC   databricks-sdk==0.65.0 \
-# MAGIC   sentence-transformers==5.1.0 \
-# MAGIC   transformers>=4.49.0,<4.51 \
-# MAGIC   tokenizers>=0.21.2,<0.22 \
-# MAGIC   sentencepiece>=0.2.0,<0.3 \
-# MAGIC   torch==2.4.1 \
-# MAGIC   numpy==1.26.4 \
-# MAGIC   pandas==2.2.3
+# MAGIC %pip install mlflow>=3.4.0 langchain==0.3.27 langchain-core==0.3.75 langchain-community langchain-huggingface==0.3.1 databricks-langchain==0.7.1 databricks-vectorsearch==0.57 databricks-sdk==0.65.0 sentence-transformers==5.1.0 "transformers>=4.49.0,<4.51" "tokenizers>=0.21.2,<0.22" "sentencepiece>=0.2.0,<0.3" torch==2.4.1 numpy==1.26.4 pandas==2.2.3
 
 # COMMAND ----------
 
@@ -56,8 +41,8 @@ import time
 import pandas as pd
 from pyspark.sql import SparkSession
 import mlflow
-from mlflow.genai import evaluate as genai_evaluate
-from mlflow.genai.scorers import make_judge
+from mlflow.genai import evaluate as genai_evaluate, scorer
+from mlflow.genai.scorers import Correctness, RelevanceToQuery, Guidelines
 
 spark = SparkSession.builder.getOrCreate()
 
@@ -173,84 +158,42 @@ print(f"評価データセット: {len(eval_dataset)}件の質問を定義しま
 rag_chain = build_rag_chain(config)
 print("RAGチェーンを構築しました")
 
-def predict_fn(inputs: Dict[str, Any]) -> Dict[str, Any]:
-    """評価用の予測関数"""
+def predict_fn(inputs: Dict[str, Any]) -> str:
+    """評価用の予測関数（文字列を返す）"""
     question = inputs.get("question", "")
     if not question:
-        return {"answer": "", "context_count": 0}
+        return ""
     
     try:
         result = rag_chain.invoke({"input": question})
         answer = result.get("answer", "")
-        context = result.get("context", [])
-        return {
-            "answer": answer,
-            "context_count": len(context),
-            "context_docs": [doc.page_content[:100] for doc in context[:3]] if context else []
-        }
+        return answer
     except Exception as e:
-        return {
-            "answer": f"エラーが発生しました: {str(e)}",
-            "context_count": 0,
-            "context_docs": []
-        }
+        return f"エラーが発生しました: {str(e)}"
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 品質評価スコアラー（Judge）の定義
+# MAGIC ## 品質評価スコアラーの定義
 # MAGIC
-# MAGIC RAGチェーンの品質を評価するためのカスタムスコアラーを定義します。
+# MAGIC RAGチェーンの品質を評価するためのスコアラーを定義します。
+# MAGIC 組み込みのscorersとカスタムスコアラーを使用します。
 
 # COMMAND ----------
 
-# 回答の正確性を評価するJudge
-accuracy_judge = make_judge(
-    name="accuracy_evaluator",
-    instructions=(
-        "あなたはRAGアプリケーションの評価者です。\n\n"
-        "質問と回答を評価し、以下の観点から評価してください：\n"
-        "1. 回答が質問に適切に答えているか\n"
-        "2. 回答が正確で信頼性が高いか\n"
-        "3. 回答が完全で必要な情報を含んでいるか\n\n"
-        "評価は以下のスケールで行ってください：\n"
-        "- 'excellent': 非常に正確で完全な回答\n"
-        "- 'good': 正確で適切な回答\n"
-        "- 'acceptable': 基本的に正確だが不完全な回答\n"
-        "- 'poor': 不正確または不適切な回答\n\n"
-        "質問: {{ inputs.question }}\n"
-        "回答: {{ outputs.answer }}"
-    ),
-    model=config.llm_endpoint,
-)
+# 組み込みのスコアラーを使用
+# 正確性評価（組み込みのCorrectnessスコアラーを使用）
+accuracy_scorer = Correctness(name="accuracy_evaluator")
 
-# コンテキストの関連性を評価するJudge
-relevance_judge = make_judge(
-    name="relevance_evaluator",
-    instructions=(
-        "あなたはRAGアプリケーションの評価者です。\n\n"
-        "取得されたコンテキストが質問に関連しているかを評価してください：\n"
-        "1. コンテキストが質問に関連しているか\n"
-        "2. コンテキストが回答に有用か\n"
-        "3. 不要なコンテキストが含まれていないか\n\n"
-        "評価は以下のスケールで行ってください：\n"
-        "- 'excellent': 非常に関連性が高い\n"
-        "- 'good': 関連性が高い\n"
-        "- 'acceptable': 基本的に関連している\n"
-        "- 'poor': 関連性が低い\n\n"
-        "質問: {{ inputs.question }}\n"
-        "取得されたコンテキスト数: {{ outputs.context_count }}\n"
-        "コンテキストの例: {{ outputs.context_docs }}"
-    ),
-    model=config.llm_endpoint,
-)
+# 関連性評価（組み込みのRelevanceToQueryスコアラーを使用）
+relevance_scorer = RelevanceToQuery(name="relevance_evaluator")
 
-# 回答の接地性（Grounding）を評価するJudge
-grounding_judge = make_judge(
+# 接地性評価（カスタムGuidelinesスコアラーを使用）
+grounding_scorer = Guidelines(
     name="grounding_evaluator",
-    instructions=(
-        "あなたはRAGアプリケーションの評価者です。\n\n"
-        "回答が取得されたコンテキストに基づいているか（接地しているか）を評価してください：\n"
+    guidelines=(
+        "回答が取得されたコンテキストに基づいているか（接地しているか）を評価してください。\n"
+        "以下の観点から評価してください：\n"
         "1. 回答がコンテキストに基づいているか\n"
         "2. 回答がコンテキストから推論できるか\n"
         "3. 回答がコンテキストにない情報を含んでいないか\n\n"
@@ -258,12 +201,8 @@ grounding_judge = make_judge(
         "- 'excellent': 完全にコンテキストに基づいている\n"
         "- 'good': 主にコンテキストに基づいている\n"
         "- 'acceptable': 一部コンテキストに基づいている\n"
-        "- 'poor': コンテキストに基づいていない\n\n"
-        "質問: {{ inputs.question }}\n"
-        "回答: {{ outputs.answer }}\n"
-        "取得されたコンテキスト数: {{ outputs.context_count }}"
+        "- 'poor': コンテキストに基づいていない"
     ),
-    model=config.llm_endpoint,
 )
 
 print("品質評価スコアラーを定義しました")
@@ -296,7 +235,7 @@ with mlflow.start_run(run_name="yona-commuting-allowance-rag-evaluation"):
     eval_results = genai_evaluate(
         data=eval_dataset,
         predict_fn=predict_fn,
-        scorers=[accuracy_judge, relevance_judge, grounding_judge],
+        scorers=[accuracy_scorer, relevance_scorer, grounding_scorer],
     )
     
     elapsed_time = time.time() - start_time
