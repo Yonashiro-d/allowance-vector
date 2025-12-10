@@ -1,14 +1,15 @@
 import mlflow
 import uuid
+from typing import Any, Dict
 from mlflow.pyfunc import PythonModel
-from mlflow.types.agent import ChatAgentMessage
+from mlflow.types.agent import ChatAgentMessage, ChatAgentResponse
 from agent import AGENT
 
 
 class AgentModel(PythonModel):
     """Wrapper to expose AGENT (ChatAgent) via models-from-code."""
 
-    def predict(self, context, model_input):
+    def predict(self, context: Any, model_input: Dict[str, Any]) -> ChatAgentResponse:
         # model_inputは {"messages": [{"role": "user", "content": "..."}]} の形式
         # AGENT.predict()は list[ChatAgentMessage] を期待するため変換が必要
         if isinstance(model_input, dict) and "messages" in model_input:
