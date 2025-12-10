@@ -50,12 +50,15 @@ spark = SparkSession.builder.getOrCreate()
 # COMMAND ----------
 
 from rag_config import RAGConfig
+from agent import AGENT
+from mlflow.models.signature import infer_signature
 
 config = RAGConfig()
 print(f"Catalog: {config.catalog}, Schema: {config.schema}")
 print(f"Delta Table: {config.delta_table_name}")
 print(f"Vector Index: {config.vector_index_name}")
 print(f"LLM Endpoint: {config.llm_endpoint}")
+print(f"Serving Endpoint Name: {config.serving_endpoint_name}")
 
 # COMMAND ----------
 
@@ -221,6 +224,20 @@ with mlflow.start_run(run_name="yona-commuting-allowance-rag-agent"):
         ]
     }
     
+    # 出力例を生成して署名を付与（UC登録に必須）
+    resp_example = AGENT.predict(input_example["messages"])
+    output_example = {
+        "messages": [
+            {
+                "id": m.id,
+                "role": m.role,
+                "content": m.content,
+            }
+            for m in resp_example.messages
+        ]
+    }
+    signature = infer_signature(input_example, output_example)
+    
     logged_model_info = mlflow.pyfunc.log_model(
         artifact_path="agent",
         python_model="agent_model.py",
@@ -228,6 +245,7 @@ with mlflow.start_run(run_name="yona-commuting-allowance-rag-agent"):
         pip_requirements=pip_requirements,
         resources=resources,
         input_example=input_example,
+        signature=signature,
     )
     
     print(f"Agent logged: {logged_model_info.model_uri}")
