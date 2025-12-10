@@ -50,7 +50,6 @@ spark = SparkSession.builder.getOrCreate()
 # COMMAND ----------
 
 from rag_config import RAGConfig
-from agent import AGENT
 
 config = RAGConfig()
 print(f"Catalog: {config.catalog}, Schema: {config.schema}")
@@ -224,7 +223,8 @@ with mlflow.start_run(run_name="yona-commuting-allowance-rag-agent"):
     
     logged_model_info = mlflow.pyfunc.log_model(
         artifact_path="agent",
-        python_model=AGENT,
+        python_model="agent_model.py",
+        code_paths=["agent.py", "rag_config.py"],
         pip_requirements=pip_requirements,
         resources=resources,
         input_example=input_example,
