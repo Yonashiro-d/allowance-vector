@@ -18,7 +18,7 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install mlflow>=3.4.0 langchain==0.3.27 langchain-core==0.3.75 langchain-community langchain-huggingface==0.3.1 databricks-langchain==0.7.1 databricks-vectorsearch==0.57 databricks-sdk==0.65.0 sentence-transformers==5.1.0 "transformers>=4.49.0,<4.51" "tokenizers>=0.21.2,<0.22" "sentencepiece>=0.2.0,<0.3" torch==2.4.1 numpy==1.26.4 pandas==2.2.3
+# MAGIC %pip install mlflow langchain langchain-core langchain-community langchain-huggingface databricks-langchain databricks-vectorsearch databricks-sdk sentence-transformers transformers tokenizers sentencepiece torch numpy pandas
 
 # COMMAND ----------
 
@@ -265,7 +265,11 @@ with mlflow.start_run(run_name="yona-commuting-allowance-rag-evaluation"):
         print(f"評価メトリクス: {eval_results.metrics}")
     
     # 評価結果のテーブルをログ
-    if hasattr(eval_results, 'tables'):
+    if hasattr(eval_results, 'result_df'):
+        # result_dfをテーブルとしてログ
+        mlflow.log_table(eval_results.result_df, "eval_results_table.json")
+        print("評価結果テーブルをログしました")
+    elif hasattr(eval_results, 'tables'):
         for table_name, table_df in eval_results.tables.items():
             mlflow.log_table(table_df, f"{table_name}.json")
             print(f"テーブル '{table_name}' をログしました")
@@ -292,24 +296,25 @@ with mlflow.start_run(run_name="yona-commuting-allowance-rag-evaluation"):
 # COMMAND ----------
 
 # 評価結果をDataFrameに変換
-if hasattr(eval_results, 'tables') and 'eval_results_table' in eval_results.tables:
-    results_df = eval_results.tables['eval_results_table']
+if hasattr(eval_results, 'result_df'):
+    # EvaluationResultオブジェクトにはresult_df属性がある
+    results_df = eval_results.result_df
     print("評価結果のサマリー:")
     print(results_df.describe())
     
     # 評価結果を表示
     display(results_df)
+elif hasattr(eval_results, 'tables') and 'eval_results_table' in eval_results.tables:
+    # フォールバック: tables属性を使用
+    results_df = eval_results.tables['eval_results_table']
+    print("評価結果のサマリー:")
+    print(results_df.describe())
+    display(results_df)
 else:
-    # フォールバック: eval_resultsを直接DataFrameに変換
-    try:
-        results_df = pd.DataFrame(eval_results)
-        print("評価結果のサマリー:")
-        print(results_df.describe())
-        display(results_df)
-    except Exception as e:
-        print(f"評価結果のDataFrame変換でエラー: {e}")
-        print(f"評価結果の型: {type(eval_results)}")
-        print(f"評価結果: {eval_results}")
+    print(f"評価結果の型: {type(eval_results)}")
+    print(f"評価結果の属性: {dir(eval_results)}")
+    print(f"評価結果: {eval_results}")
+    raise ValueError("評価結果からDataFrameを取得できませんでした")
 
 # COMMAND ----------
 
