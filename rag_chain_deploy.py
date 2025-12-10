@@ -36,10 +36,6 @@ dbutils.library.restartPython()
 
 from pyspark.sql import SparkSession
 import mlflow
-import uuid
-from mlflow.models import infer_signature
-from mlflow.types.agent import ChatAgentMessage
-from agent import AGENT
 
 spark = SparkSession.builder.getOrCreate()
 
@@ -114,28 +110,8 @@ with mlflow.start_run(run_name="yona-commuting-allowance-rag-agent"):
         ]
     }
     
-    # 出力例を生成して署名を推論（Unity Catalog登録に必須）
-    messages_for_predict = [
-        ChatAgentMessage(
-            id=str(uuid.uuid4()),
-            role=msg["role"],
-            content=msg["content"]
-        )
-        for msg in input_example["messages"]
-    ]
-    resp_example = AGENT.predict(messages_for_predict)
-    output_example = {
-        "messages": [
-            {
-                "id": m.id,
-                "role": m.role,
-                "content": m.content,
-            }
-            for m in resp_example.messages
-        ]
-    }
-    signature = infer_signature(input_example, output_example)
-    
+    # ChatAgentの場合はinput_exampleから自動的に署名が推論される
+    # Agent Framework互換のChatCompletionResponse形式になる
     logged_model_info = mlflow.pyfunc.log_model(
         artifact_path="agent",
         python_model="agent_model.py",
@@ -143,7 +119,6 @@ with mlflow.start_run(run_name="yona-commuting-allowance-rag-agent"):
         pip_requirements=pip_requirements,
         resources=resources,
         input_example=input_example,
-        signature=signature,
     )
     
     print(f"Agent logged: {logged_model_info.model_uri}")
