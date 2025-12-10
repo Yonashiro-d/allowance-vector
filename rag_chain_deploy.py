@@ -63,7 +63,7 @@ print(f"Serving Endpoint Name: {config.serving_endpoint_name}")
 # COMMAND ----------
 
 mlflow.set_registry_uri("databricks-uc")
-UC_MODEL_NAME = f"{config.catalog}.{config.schema}.commuting_allowance_rag_agent"
+UC_MODEL_NAME = f"{config.catalog}.{config.schema}.yona_commuting_allowance_rag_agent"
 print(f"Model name: {UC_MODEL_NAME}")
 
 # COMMAND ----------
