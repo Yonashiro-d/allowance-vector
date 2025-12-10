@@ -52,6 +52,7 @@ spark = SparkSession.builder.getOrCreate()
 from rag_config import RAGConfig
 from agent import AGENT
 from mlflow.models.signature import infer_signature
+from mlflow.types.agent import ChatAgentMessage
 
 config = RAGConfig()
 print(f"Catalog: {config.catalog}, Schema: {config.schema}")
@@ -224,8 +225,17 @@ with mlflow.start_run(run_name="yona-commuting-allowance-rag-agent"):
         ]
     }
     
-    # 出力例を生成して署名を付与（UC登録に必須）
-    resp_example = AGENT.predict(input_example["messages"])
+    # 出力例を生成して署名を付与（UC登録）
+    # 辞書をChatAgentMessageオブジェクトに変換
+    messages_for_predict = [
+        ChatAgentMessage(
+            id=str(uuid.uuid4()),
+            role=msg["role"],
+            content=msg["content"]
+        )
+        for msg in input_example["messages"]
+    ]
+    resp_example = AGENT.predict(messages_for_predict)
     output_example = {
         "messages": [
             {
