@@ -282,9 +282,43 @@ print(f"Model registered: {UC_MODEL_NAME} v{uc_registered_model_info.version}")
 
 from databricks import agents
 from databricks.sdk import WorkspaceClient
+import time
 
 endpoint_name = "commuting-allowance-rag-agent-endpoint"
 print(f"Deploying: {UC_MODEL_NAME} v{uc_registered_model_info.version} to {endpoint_name}")
+
+w = WorkspaceClient()
+
+# エンドポイントが存在する場合、更新が完了するまで待機
+try:
+    endpoint = w.serving_endpoints.get(endpoint_name)
+    config_update = endpoint.state.get("config_update", "NOT_UPDATING")
+    
+    if config_update == "UPDATING":
+        print(f"Endpoint {endpoint_name} is currently updating. Waiting for update to complete...")
+        max_wait_time = 1800  # 30分
+        wait_interval = 15  # 15秒ごとに確認
+        elapsed_time = 0
+        
+        while elapsed_time < max_wait_time:
+            time.sleep(wait_interval)
+            elapsed_time += wait_interval
+            endpoint = w.serving_endpoints.get(endpoint_name)
+            config_update = endpoint.state.get("config_update", "NOT_UPDATING")
+            
+            if config_update == "NOT_UPDATING":
+                print(f"Endpoint update completed after {elapsed_time} seconds")
+                break
+            else:
+                print(f"Still updating... ({elapsed_time}s elapsed)")
+        else:
+            raise TimeoutError(f"Endpoint {endpoint_name} did not finish updating within {max_wait_time} seconds")
+except Exception as e:
+    # エンドポイントが存在しない場合は新規作成
+    if "RESOURCE_DOES_NOT_EXIST" in str(e) or "does not exist" in str(e).lower():
+        print(f"Endpoint {endpoint_name} does not exist. Will create new endpoint.")
+    else:
+        print(f"Error checking endpoint status: {e}")
 
 try:
     deployment_info = agents.deploy(
@@ -295,10 +329,15 @@ try:
     
     print(f"Agent deployed: {deployment_info}")
     
-    w = WorkspaceClient()
     endpoint = w.serving_endpoints.get(endpoint_name)
     print(f"Endpoint: {endpoint_name}, State: {endpoint.state}")
         
+except ValueError as e:
+    if "currently updating" in str(e):
+        print(f"Endpoint is still updating. Please wait and retry later.")
+        print(f"Current endpoint state: {w.serving_endpoints.get(endpoint_name).state}")
+    else:
+        raise
 except Exception as e:
     print(f"Deploy error: {e}")
     raise

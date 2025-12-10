@@ -32,7 +32,7 @@ class RAGConfig:
         )
         self.vector_search_endpoint = vector_search_endpoint or os.environ.get(
             "VECTOR_SEARCH_ENDPOINT",
-            "databricks-bge-large-en-endpoint"
+            "yona_commuting_vector_search"
         )
         
         # Embeddingモデル（vector_preparation.pyと統一）

@@ -65,15 +65,22 @@ vsc = VectorSearchClient(disable_notice=True)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 設定の定義
+# MAGIC ## 設定の読み込み
+# MAGIC
+# MAGIC `rag_config.py`の`RAGConfig`を使用して設定を一元管理します。
 
 # COMMAND ----------
 
-CATALOG = "hhhd_demo_itec"
-SCHEMA = "allowance_payment_rules"
-DELTA_TABLE_NAME = f"{CATALOG}.{SCHEMA}.commuting_allowance_vectors"
-VECTOR_SEARCH_ENDPOINT = "databricks-bge-large-en-endpoint"
-VECTOR_INDEX_NAME = f"{CATALOG}.{SCHEMA}.commuting_allowance_index"
+from rag_config import RAGConfig
+
+config = RAGConfig()
+
+# 設定値を変数に展開（後方互換性のため）
+CATALOG = config.catalog
+SCHEMA = config.schema
+DELTA_TABLE_NAME = config.delta_table_name
+VECTOR_SEARCH_ENDPOINT = config.vector_search_endpoint
+VECTOR_INDEX_NAME = config.vector_index_name
 
 print(f"Catalog: {CATALOG}")
 print(f"Schema: {SCHEMA}")
