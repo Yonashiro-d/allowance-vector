@@ -123,22 +123,37 @@ def build_rag_chain(config: RAGConfig) -> Any:
 eval_dataset = [
     {
         "inputs": {"question": "通勤手当はいくらまで支給されますか？"},
+        "expectations": {
+            "expected_facts": ["通勤手当の支給上限額に関する情報"]
+        },
         "tags": {"category": "支給額", "difficulty": "easy"},
     },
     {
         "inputs": {"question": "通勤手当の支給条件を教えてください"},
+        "expectations": {
+            "expected_facts": ["通勤手当の支給条件に関する情報"]
+        },
         "tags": {"category": "支給条件", "difficulty": "medium"},
     },
     {
         "inputs": {"question": "通勤手当はどのように計算されますか？"},
+        "expectations": {
+            "expected_facts": ["通勤手当の計算方法に関する情報"]
+        },
         "tags": {"category": "計算方法", "difficulty": "medium"},
     },
     {
         "inputs": {"question": "通勤手当の申請方法を教えてください"},
+        "expectations": {
+            "expected_facts": ["通勤手当の申請方法に関する情報"]
+        },
         "tags": {"category": "申請方法", "difficulty": "easy"},
     },
     {
         "inputs": {"question": "通勤手当が支給されない場合はありますか？"},
+        "expectations": {
+            "expected_facts": ["通勤手当が支給されない条件に関する情報"]
+        },
         "tags": {"category": "支給条件", "difficulty": "hard"},
     },
 ]
@@ -158,9 +173,8 @@ print(f"評価データセット: {len(eval_dataset)}件の質問を定義しま
 rag_chain = build_rag_chain(config)
 print("RAGチェーンを構築しました")
 
-def predict_fn(inputs: Dict[str, Any]) -> str:
+def predict_fn(question: str) -> str:
     """評価用の予測関数（文字列を返す）"""
-    question = inputs.get("question", "")
     if not question:
         return ""
     
