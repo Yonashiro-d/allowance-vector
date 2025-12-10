@@ -17,18 +17,18 @@ class RAGConfig:
     ):
         # Unity Catalog設定（vector_preparation.pyと統一）
         self.catalog = catalog or os.environ.get("CATALOG", "hhhd_demo_itec")
-        self.schema = schema or os.environ.get("SCHEMA", "allowance_payment_rules")
+        self.schema = schema or os.environ.get("SCHEMA", "yona_allowance_payment_rules")
         
         # Deltaテーブル名（vector_preparation.pyと統一）
         self.delta_table_name = delta_table_name or os.environ.get(
             "DELTA_TABLE_NAME",
-            f"{self.catalog}.{self.schema}.commuting_allowance_vectors"
+            f"{self.catalog}.{self.schema}.yona_commuting_allowance_vectors"
         )
         
         # Vector Search設定（vector_preparation.pyと統一）
         self.vector_index_name = vector_index_name or os.environ.get(
             "VECTOR_INDEX_NAME",
-            f"{self.catalog}.{self.schema}.commuting_allowance_index"
+            f"{self.catalog}.{self.schema}.yona_commuting_allowance_index"
         )
         self.vector_search_endpoint = vector_search_endpoint or os.environ.get(
             "VECTOR_SEARCH_ENDPOINT",
@@ -45,13 +45,13 @@ class RAGConfig:
         # 環境変数LLM_ENDPOINTが設定されていない場合は、通常のエンドポイントを使用
         self.llm_endpoint = llm_endpoint or os.environ.get(
             "LLM_ENDPOINT",
-            "databricks-llama-4-maverick"  # 通常のFoundation Model APIエンドポイント
+            "databricks-llama-4-maverick"
         )
         
         # サービングエンドポイント名
         self.serving_endpoint_name = serving_endpoint_name or os.environ.get(
             "SERVING_ENDPOINT_NAME",
-            "commuting-allowance-rag-endpoint"
+            "yona-commuting-allowance-rag-endpoint"
         )
         
         # Retriever設定

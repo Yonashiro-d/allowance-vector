@@ -20,7 +20,7 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install -U databricks-langchain langchain-community langchain databricks-sql-connector
+# MAGIC %pip install -U databricks-langchain langchain-community langchain databricks-sql-connector ptpdf sentence-transformers sentencepiece
 
 # COMMAND ----------
 
@@ -185,7 +185,7 @@ def get_pdf_path(data_path: str = None, pdf_path: str = None) -> str:
 # COMMAND ----------
 
 # フルパスを指定
-pdf_path = get_pdf_path(pdf_path="/Workspace/Users/toshimitsu-yu@itec.hankyu-hanshin.co.jp/allowance-vector/通勤手当支給規程（2024-04-01）.pdf")
+pdf_path = get_pdf_path(pdf_path="/Workspace/Users/yonashiro-d3@itec.hankyu-hanshin.co.jp/allowance-vector/通勤手当支給規程（2024-04-01）.pdf")
 
 # または、Repos配下のファイルを自動検出
 # pdf_path = get_pdf_path()

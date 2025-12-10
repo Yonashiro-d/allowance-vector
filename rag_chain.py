@@ -50,6 +50,7 @@ spark = SparkSession.builder.getOrCreate()
 # COMMAND ----------
 
 from rag_config import RAGConfig
+from agent import AGENT
 
 config = RAGConfig()
 print(f"Catalog: {config.catalog}, Schema: {config.schema}")
@@ -93,6 +94,7 @@ chain_config = {
 
 # MAGIC %md
 # MAGIC ## RAGチェーン構築関数の定義
+# MAGIC ## RAGチェーンの構築
 # MAGIC
 # MAGIC `agent.py`の`create_rag_chain`関数と同様のロジックでRAGチェーンを構築します。
 # MAGIC この関数はBuildフェーズ（MLflow Trace記録）で使用されます。
@@ -120,13 +122,6 @@ def build_rag_chain(chain_config: dict[str, Any], config: RAGConfig) -> tuple[An
     
     return rag_chain, retriever, vector_store
 
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## RAGチェーンの構築
-
-# COMMAND ----------
-
 rag_chain, retriever, vector_store = build_rag_chain(chain_config, config)
 print(f"RAG chain created: {type(rag_chain).__name__}")
 print(f"Retriever: {type(retriever).__name__}, Top K: {config.retriever_top_k}")
@@ -140,7 +135,7 @@ print(f"Retriever: {type(retriever).__name__}, Top K: {config.retriever_top_k}")
 
 # COMMAND ----------
 
-with mlflow.start_run(run_name="commuting-allowance-rag-chain"):
+with mlflow.start_run(run_name="yona-commuting-allowance-rag-chain"):
     mlflow.log_params({
         "llm_model_serving_endpoint_name": chain_config["llm_model_serving_endpoint_name"],
         "vector_search_endpoint_name": chain_config["vector_search_endpoint_name"],
@@ -210,12 +205,11 @@ resources = [
 # MAGIC ## ChatAgentモデルのログ
 # MAGIC
 # MAGIC `agent.py`で定義されたエージェントをMLflowにログします。
-# MAGIC `agent.py`で`mlflow.models.set_model(AGENT)`が呼ばれているため、
-# MAGIC `python_model`パラメータに`AGENT`オブジェクトを直接指定します。
+# MAGIC `python_model`には`AGENT`オブジェクトを直接指定します。
 
 # COMMAND ----------
 
-with mlflow.start_run(run_name="commuting-allowance-rag-agent"):
+with mlflow.start_run(run_name="yona-commuting-allowance-rag-agent"):
     with open("requirements.txt", "r") as f:
         pip_requirements = [line.strip() for line in f if line.strip() and not line.startswith("#")]
     
@@ -230,12 +224,10 @@ with mlflow.start_run(run_name="commuting-allowance-rag-agent"):
     
     logged_model_info = mlflow.pyfunc.log_model(
         artifact_path="agent",
-        python_model="agent_model.py",
-        code_paths=["agent.py", "rag_config.py"],
+        python_model=AGENT,
         pip_requirements=pip_requirements,
         resources=resources,
         input_example=input_example,
-        example_no_conversion=True,
     )
     
     print(f"Agent logged: {logged_model_info.model_uri}")
@@ -251,11 +243,6 @@ with mlflow.start_run(run_name="commuting-allowance-rag-agent"):
         "schema": config.schema
     })
     
-    mlflow.set_tag("task", "llm/v1/chat")
-    mlflow.set_tag("embedding_model", config.query_embedding_model)
-    mlflow.set_tag("llm", chain_config["llm_model_serving_endpoint_name"])
-    mlflow.set_tag("model_type", "databricks-agent")
-    mlflow.set_tag("chain_type", "retrieval_chain")
     
     print(f"Run ID: {mlflow.active_run().info.run_id}")
 
@@ -282,43 +269,11 @@ print(f"Model registered: {UC_MODEL_NAME} v{uc_registered_model_info.version}")
 
 from databricks import agents
 from databricks.sdk import WorkspaceClient
-import time
 
-endpoint_name = "commuting-allowance-rag-agent-endpoint"
+endpoint_name = config.serving_endpoint_name
 print(f"Deploying: {UC_MODEL_NAME} v{uc_registered_model_info.version} to {endpoint_name}")
 
 w = WorkspaceClient()
-
-# エンドポイントが存在する場合、更新が完了するまで待機
-try:
-    endpoint = w.serving_endpoints.get(endpoint_name)
-    config_update = endpoint.state.get("config_update", "NOT_UPDATING")
-    
-    if config_update == "UPDATING":
-        print(f"Endpoint {endpoint_name} is currently updating. Waiting for update to complete...")
-        max_wait_time = 1800  # 30分
-        wait_interval = 15  # 15秒ごとに確認
-        elapsed_time = 0
-        
-        while elapsed_time < max_wait_time:
-            time.sleep(wait_interval)
-            elapsed_time += wait_interval
-            endpoint = w.serving_endpoints.get(endpoint_name)
-            config_update = endpoint.state.get("config_update", "NOT_UPDATING")
-            
-            if config_update == "NOT_UPDATING":
-                print(f"Endpoint update completed after {elapsed_time} seconds")
-                break
-            else:
-                print(f"Still updating... ({elapsed_time}s elapsed)")
-        else:
-            raise TimeoutError(f"Endpoint {endpoint_name} did not finish updating within {max_wait_time} seconds")
-except Exception as e:
-    # エンドポイントが存在しない場合は新規作成
-    if "RESOURCE_DOES_NOT_EXIST" in str(e) or "does not exist" in str(e).lower():
-        print(f"Endpoint {endpoint_name} does not exist. Will create new endpoint.")
-    else:
-        print(f"Error checking endpoint status: {e}")
 
 try:
     deployment_info = agents.deploy(
@@ -326,18 +281,7 @@ try:
         model_version=uc_registered_model_info.version,
         endpoint_name=endpoint_name
     )
-    
     print(f"Agent deployed: {deployment_info}")
-    
-    endpoint = w.serving_endpoints.get(endpoint_name)
-    print(f"Endpoint: {endpoint_name}, State: {endpoint.state}")
-        
-except ValueError as e:
-    if "currently updating" in str(e):
-        print(f"Endpoint is still updating. Please wait and retry later.")
-        print(f"Current endpoint state: {w.serving_endpoints.get(endpoint_name).state}")
-    else:
-        raise
 except Exception as e:
     print(f"Deploy error: {e}")
     raise
@@ -347,11 +291,11 @@ except Exception as e:
 # MAGIC %md
 # MAGIC ## エージェントのテスト
 # MAGIC
-# MAGIC デプロイされたエージェントをテストします。Playgroundでも同様にテストできます。
+# MAGIC デプロイされたエージェントをテストします。成功した場合はPlaygroundでも同様にテストできます。
 
 # COMMAND ----------
 
-endpoint_name = "commuting-allowance-rag-agent-endpoint"
+endpoint_name = config.serving_endpoint_name
 try:
     w = WorkspaceClient()
     endpoint = w.serving_endpoints.get(endpoint_name)
