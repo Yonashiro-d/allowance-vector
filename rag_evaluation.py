@@ -306,11 +306,22 @@ if hasattr(eval_results, 'result_df'):
     print("\n評価結果の最初の数行:")
     display(results_df.head())
     
-    # 数値列のみでサマリーを表示
+    # 数値列
     numeric_cols = results_df.select_dtypes(include=['number']).columns
+    numeric_cols = [col for col in numeric_cols if col != 'request_time']
     if len(numeric_cols) > 0:
         print("\n数値列のサマリー:")
         print(results_df[numeric_cols].describe())
+    
+    # request_timeを日時として表示
+    if 'request_time' in results_df.columns:
+        print("\nrequest_time（最初の5件）:")
+        # ミリ秒のタイムスタンプを日時に変換
+        try:
+            request_times = pd.to_datetime(results_df['request_time'], unit='ms')
+            print(request_times.head())
+        except:
+            print(results_df['request_time'].head())
 elif hasattr(eval_results, 'tables') and 'eval_results_table' in eval_results.tables:
     # フォールバック: tables属性を使用
     results_df = eval_results.tables['eval_results_table']
@@ -326,63 +337,34 @@ else:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## カテゴリ別の評価結果
-
-# COMMAND ----------
-
-# カテゴリ別に評価結果を集計
-try:
-    # tagsカラムがある場合
-    if "tags" in results_df.columns:
-        # tagsが辞書の場合は展開
-        if results_df["tags"].dtype == 'object':
-            tags_df = pd.json_normalize(results_df["tags"])
-            results_df_expanded = pd.concat([results_df, tags_df], axis=1)
-            
-            # カテゴリ別に集計
-            if "category" in tags_df.columns:
-                # 数値列のみを集計対象とする
-                numeric_cols = results_df_expanded.select_dtypes(include=['number']).columns
-                evaluator_cols = [col for col in numeric_cols if "evaluator" in col.lower() or "judge" in col.lower() or "score" in col.lower()]
-                
-                if len(evaluator_cols) > 0:
-                    category_results = results_df_expanded.groupby("category")[evaluator_cols].agg(["mean", "std"])
-                    print("\nカテゴリ別評価結果（数値列のみ）:")
-                    display(category_results)
-                else:
-                    # 文字列型の評価スコアがある場合、カウントを表示
-                    string_cols = [col for col in results_df_expanded.columns if "evaluator" in col.lower() or "judge" in col.lower()]
-                    if len(string_cols) > 0:
-                        print("\nカテゴリ別評価結果（文字列型スコアの分布）:")
-                        for col in string_cols:
-                            print(f"\n{col}の分布:")
-                            category_counts = results_df_expanded.groupby("category")[col].value_counts().unstack(fill_value=0)
-                            display(category_counts)
-    else:
-        print("tagsカラムが見つかりません。評価データセットにtagsが含まれているか確認してください。")
-except Exception as e:
-    print(f"カテゴリ別集計でエラー: {e}")
-    import traceback
-    traceback.print_exc()
-
-# COMMAND ----------
-
-# MAGIC %md
 # MAGIC ## 個別の評価結果の確認
 
 # COMMAND ----------
 
 try:
-    # 列名を確認
-    print("利用可能な列名:")
-    print(results_df.columns.tolist())
-    print("\n")
-    
     for idx, row in results_df.iterrows():
         print(f"\n=== 質問 {idx + 1} ===")
         
-        # 入力の取得（列名を確認して適切にアクセス）
-        if 'inputs' in results_df.columns:
+        # 質問の取得（request列から取得）
+        question = 'N/A'
+        if 'request' in results_df.columns:
+            request = row['request']
+            if isinstance(request, dict):
+                # requestの中にinputsやquestionがある可能性
+                if 'inputs' in request:
+                    inputs = request['inputs']
+                    if isinstance(inputs, dict):
+                        question = inputs.get('question', str(inputs))
+                    else:
+                        question = str(inputs)
+                elif 'question' in request:
+                    question = request['question']
+                else:
+                    # request全体を文字列として表示
+                    question = str(request)
+            elif isinstance(request, str):
+                question = request
+        elif 'inputs' in results_df.columns:
             inputs = row['inputs']
             if isinstance(inputs, dict):
                 question = inputs.get('question', str(inputs))
@@ -390,12 +372,31 @@ try:
                 question = str(inputs)
         elif 'question' in results_df.columns:
             question = row['question']
-        else:
-            question = 'N/A'
+        
         print(f"質問: {question}")
         
-        # 出力の取得
-        if 'outputs' in results_df.columns:
+        # 回答の取得（response列から取得）
+        answer = 'N/A'
+        if 'response' in results_df.columns:
+            response = row['response']
+            if isinstance(response, dict):
+                # responseの中にoutputsやanswerがある可能性
+                if 'outputs' in response:
+                    outputs = response['outputs']
+                    if isinstance(outputs, dict):
+                        answer = outputs.get('answer', str(outputs))
+                    else:
+                        answer = str(outputs)
+                elif 'answer' in response:
+                    answer = response['answer']
+                elif 'content' in response:
+                    answer = response['content']
+                else:
+                    # response全体を文字列として表示
+                    answer = str(response)
+            elif isinstance(response, str):
+                answer = response
+        elif 'outputs' in results_df.columns:
             outputs = row['outputs']
             if isinstance(outputs, dict):
                 answer = outputs.get('answer', str(outputs))
@@ -403,17 +404,23 @@ try:
                 answer = str(outputs)
         elif 'answer' in results_df.columns:
             answer = row['answer']
-        else:
-            answer = 'N/A'
         
         if isinstance(answer, str) and len(answer) > 200:
             answer = answer[:200] + "..."
         print(f"回答: {answer}")
         
         # 評価スコアの取得（列名を確認）
-        accuracy_cols = [col for col in results_df.columns if 'accuracy' in col.lower()]
-        relevance_cols = [col for col in results_df.columns if 'relevance' in col.lower()]
-        grounding_cols = [col for col in results_df.columns if 'grounding' in col.lower()]
+        accuracy_cols = [col for col in results_df.columns if 'accuracy' in col.lower() and '/value' in col]
+        relevance_cols = [col for col in results_df.columns if 'relevance' in col.lower() and '/value' in col]
+        grounding_cols = [col for col in results_df.columns if 'grounding' in col.lower() and '/value' in col]
+        
+        # フォールバック: /valueがない場合
+        if not accuracy_cols:
+            accuracy_cols = [col for col in results_df.columns if 'accuracy' in col.lower()]
+        if not relevance_cols:
+            relevance_cols = [col for col in results_df.columns if 'relevance' in col.lower()]
+        if not grounding_cols:
+            grounding_cols = [col for col in results_df.columns if 'grounding' in col.lower()]
         
         accuracy = row[accuracy_cols[0]] if accuracy_cols else 'N/A'
         relevance = row[relevance_cols[0]] if relevance_cols else 'N/A'
