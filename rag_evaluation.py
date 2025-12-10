@@ -299,39 +299,12 @@ with mlflow.start_run(run_name="yona-commuting-allowance-rag-evaluation"):
 if hasattr(eval_results, 'result_df'):
     # EvaluationResultオブジェクトにはresult_df属性がある
     results_df = eval_results.result_df
-    print("評価結果の列名:")
-    print(results_df.columns.tolist())
-    print("\n評価結果のデータ型:")
-    print(results_df.dtypes)
-    print("\n評価結果の最初の数行:")
     display(results_df.head())
-    
-    # 数値列
-    numeric_cols = results_df.select_dtypes(include=['number']).columns
-    numeric_cols = [col for col in numeric_cols if col != 'request_time']
-    if len(numeric_cols) > 0:
-        print("\n数値列のサマリー:")
-        print(results_df[numeric_cols].describe())
-    
-    # request_timeを日時として表示
-    if 'request_time' in results_df.columns:
-        print("\nrequest_time（最初の5件）:")
-        # ミリ秒のタイムスタンプを日時に変換
-        try:
-            request_times = pd.to_datetime(results_df['request_time'], unit='ms')
-            print(request_times.head())
-        except:
-            print(results_df['request_time'].head())
 elif hasattr(eval_results, 'tables') and 'eval_results_table' in eval_results.tables:
     # フォールバック: tables属性を使用
     results_df = eval_results.tables['eval_results_table']
-    print("評価結果の列名:")
-    print(results_df.columns.tolist())
     display(results_df.head())
 else:
-    print(f"評価結果の型: {type(eval_results)}")
-    print(f"評価結果の属性: {dir(eval_results)}")
-    print(f"評価結果: {eval_results}")
     raise ValueError("評価結果からDataFrameを取得できませんでした")
 
 # COMMAND ----------
@@ -341,107 +314,95 @@ else:
 
 # COMMAND ----------
 
-try:
-    for idx, row in results_df.iterrows():
-        print(f"\n=== 質問 {idx + 1} ===")
-        
-        # 質問の取得（request列から取得）
-        question = 'N/A'
-        if 'request' in results_df.columns:
-            request = row['request']
-            if isinstance(request, dict):
-                # requestの中にinputsやquestionがある可能性
-                if 'inputs' in request:
-                    inputs = request['inputs']
-                    if isinstance(inputs, dict):
-                        question = inputs.get('question', str(inputs))
-                    else:
-                        question = str(inputs)
-                elif 'question' in request:
-                    question = request['question']
-                else:
-                    # request全体を文字列として表示
-                    question = str(request)
-            elif isinstance(request, str):
-                question = request
-        elif 'inputs' in results_df.columns:
-            inputs = row['inputs']
-            if isinstance(inputs, dict):
-                question = inputs.get('question', str(inputs))
-            else:
-                question = str(inputs)
-        elif 'question' in results_df.columns:
-            question = row['question']
-        
-        print(f"質問: {question}")
-        
-        # 回答の取得（response列から取得）
-        answer = 'N/A'
-        if 'response' in results_df.columns:
-            response = row['response']
-            if isinstance(response, dict):
-                # responseの中にoutputsやanswerがある可能性
-                if 'outputs' in response:
-                    outputs = response['outputs']
-                    if isinstance(outputs, dict):
-                        answer = outputs.get('answer', str(outputs))
-                    else:
-                        answer = str(outputs)
-                elif 'answer' in response:
-                    answer = response['answer']
-                elif 'content' in response:
-                    answer = response['content']
-                else:
-                    # response全体を文字列として表示
-                    answer = str(response)
-            elif isinstance(response, str):
-                answer = response
-        elif 'outputs' in results_df.columns:
-            outputs = row['outputs']
-            if isinstance(outputs, dict):
-                answer = outputs.get('answer', str(outputs))
-            else:
-                answer = str(outputs)
-        elif 'answer' in results_df.columns:
-            answer = row['answer']
-        
-        if isinstance(answer, str) and len(answer) > 200:
-            answer = answer[:200] + "..."
-        print(f"回答: {answer}")
-        
-        # 評価スコアの取得（列名を確認）
-        accuracy_cols = [col for col in results_df.columns if 'accuracy' in col.lower() and '/value' in col]
-        relevance_cols = [col for col in results_df.columns if 'relevance' in col.lower() and '/value' in col]
-        grounding_cols = [col for col in results_df.columns if 'grounding' in col.lower() and '/value' in col]
-        
-        # フォールバック: /valueがない場合
-        if not accuracy_cols:
-            accuracy_cols = [col for col in results_df.columns if 'accuracy' in col.lower()]
-        if not relevance_cols:
-            relevance_cols = [col for col in results_df.columns if 'relevance' in col.lower()]
-        if not grounding_cols:
-            grounding_cols = [col for col in results_df.columns if 'grounding' in col.lower()]
-        
-        accuracy = row[accuracy_cols[0]] if accuracy_cols else 'N/A'
-        relevance = row[relevance_cols[0]] if relevance_cols else 'N/A'
-        grounding = row[grounding_cols[0]] if grounding_cols else 'N/A'
-        
-        # スコアが辞書の場合はvalueを取得
-        if isinstance(accuracy, dict):
-            accuracy = accuracy.get('value', accuracy)
-        if isinstance(relevance, dict):
-            relevance = relevance.get('value', relevance)
-        if isinstance(grounding, dict):
-            grounding = grounding.get('value', grounding)
-        
-        print(f"正確性: {accuracy}")
-        print(f"関連性: {relevance}")
-        print(f"接地性: {grounding}")
-except Exception as e:
-    print(f"個別結果の表示でエラー: {e}")
-    import traceback
-    traceback.print_exc()
-    print("\n評価結果の構造を確認してください")
+def extract_question(row, df_columns):
+    """質問を抽出する関数"""
+    # request列から取得
+    if 'request' in df_columns:
+        request = row['request']
+        if isinstance(request, dict):
+            # request.inputs.question または request.question または request.input
+            if 'inputs' in request:
+                inputs = request['inputs']
+                if isinstance(inputs, dict):
+                    return inputs.get('question') or inputs.get('input', '')
+                return str(inputs)
+            elif 'question' in request:
+                return request['question']
+            elif 'input' in request:
+                return request['input']
+    # inputs列から取得
+    elif 'inputs' in df_columns:
+        inputs = row['inputs']
+        if isinstance(inputs, dict):
+            return inputs.get('question') or inputs.get('input', '')
+        return str(inputs)
+    # question列から取得
+    elif 'question' in df_columns:
+        return row['question']
+    return 'N/A'
+
+def extract_answer(row, df_columns):
+    """回答を抽出する関数"""
+    # response列から取得
+    if 'response' in df_columns:
+        response = row['response']
+        if isinstance(response, dict):
+            # response.outputs.answer または response.answer または response.content
+            if 'outputs' in response:
+                outputs = response['outputs']
+                if isinstance(outputs, dict):
+                    return outputs.get('answer', '')
+                return str(outputs)
+            elif 'answer' in response:
+                return response['answer']
+            elif 'content' in response:
+                return response['content']
+    # outputs列から取得
+    elif 'outputs' in df_columns:
+        outputs = row['outputs']
+        if isinstance(outputs, dict):
+            return outputs.get('answer', '')
+        return str(outputs)
+    # answer列から取得
+    elif 'answer' in df_columns:
+        return row['answer']
+    return 'N/A'
+
+# 個別の評価結果を表示
+for idx, row in results_df.iterrows():
+    print(f"\n=== 質問 {idx + 1} ===")
+    
+    # 質問と回答を抽出
+    question = extract_question(row, results_df.columns)
+    answer = extract_answer(row, results_df.columns)
+    
+    # 回答が長い場合は切り詰め
+    if isinstance(answer, str) and len(answer) > 300:
+        answer = answer[:300] + "..."
+    
+    print(f"質問: {question}")
+    print(f"回答: {answer}")
+    
+    # 評価スコアを取得
+    accuracy_col = next((col for col in results_df.columns if 'accuracy' in col.lower() and '/value' in col), None)
+    relevance_col = next((col for col in results_df.columns if 'relevance' in col.lower() and '/value' in col), None)
+    grounding_col = next((col for col in results_df.columns if 'grounding' in col.lower() and '/value' in col), None)
+    
+    # フォールバック
+    if not accuracy_col:
+        accuracy_col = next((col for col in results_df.columns if 'accuracy' in col.lower()), None)
+    if not relevance_col:
+        relevance_col = next((col for col in results_df.columns if 'relevance' in col.lower()), None)
+    if not grounding_col:
+        grounding_col = next((col for col in results_df.columns if 'grounding' in col.lower()), None)
+    
+    accuracy = row[accuracy_col] if accuracy_col else 'N/A'
+    relevance = row[relevance_col] if relevance_col else 'N/A'
+    grounding = row[grounding_col] if grounding_col else 'N/A'
+    
+    print(f"正確性: {accuracy}")
+    print(f"関連性: {relevance}")
+    print(f"接地性: {grounding}")
 
 # COMMAND ----------
 
@@ -478,14 +439,5 @@ except Exception as e:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 改善提案
-# MAGIC
-# MAGIC 評価結果に基づいて、以下の改善点を検討してください：
-# MAGIC
-# MAGIC 1. **低スコアの質問を特定**: 評価スコアが低い質問を特定し、原因を分析
-# MAGIC 2. **コンテキストの改善**: 関連性スコアが低い場合は、チャンキング方法やベクトル検索のパラメータを調整
-# MAGIC 3. **プロンプトの改善**: 接地性スコアが低い場合は、プロンプトテンプレートを改善
-# MAGIC 4. **評価データセットの拡充**: より多様な質問を追加して評価の網羅性を向上
-# MAGIC
 # MAGIC 参考: [Databricks生成AIアプリ開発ワークフロー - 評価と反復](https://docs.databricks.com/aws/ja/generative-ai/tutorials/ai-cookbook/genai-developer-workflow#2--評価と反復)
 
