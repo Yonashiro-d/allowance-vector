@@ -110,8 +110,10 @@ with mlflow.start_run(run_name="yona-commuting-allowance-rag-agent"):
         ]
     }
     
-    # ChatAgentの場合はinput_exampleから自動的に署名が推論される
-    # Agent Framework互換のChatCompletionResponse形式になる
+    # ChatAgentの場合、input_exampleを提供すれば自動的にAgent Framework互換の
+    # ChatCompletionResponse形式の署名が推論される
+    # agent_model.pyでmlflow.models.set_model(AGENT)を呼んでいるため、
+    # ChatAgentの標準署名が自動適用される
     logged_model_info = mlflow.pyfunc.log_model(
         name="agent",
         python_model="agent_model.py",
