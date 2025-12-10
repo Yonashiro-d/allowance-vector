@@ -299,17 +299,24 @@ with mlflow.start_run(run_name="yona-commuting-allowance-rag-evaluation"):
 if hasattr(eval_results, 'result_df'):
     # EvaluationResultオブジェクトにはresult_df属性がある
     results_df = eval_results.result_df
-    print("評価結果のサマリー:")
-    print(results_df.describe())
+    print("評価結果の列名:")
+    print(results_df.columns.tolist())
+    print("\n評価結果のデータ型:")
+    print(results_df.dtypes)
+    print("\n評価結果の最初の数行:")
+    display(results_df.head())
     
-    # 評価結果を表示
-    display(results_df)
+    # 数値列のみでサマリーを表示
+    numeric_cols = results_df.select_dtypes(include=['number']).columns
+    if len(numeric_cols) > 0:
+        print("\n数値列のサマリー:")
+        print(results_df[numeric_cols].describe())
 elif hasattr(eval_results, 'tables') and 'eval_results_table' in eval_results.tables:
     # フォールバック: tables属性を使用
     results_df = eval_results.tables['eval_results_table']
-    print("評価結果のサマリー:")
-    print(results_df.describe())
-    display(results_df)
+    print("評価結果の列名:")
+    print(results_df.columns.tolist())
+    display(results_df.head())
 else:
     print(f"評価結果の型: {type(eval_results)}")
     print(f"評価結果の属性: {dir(eval_results)}")
@@ -334,17 +341,29 @@ try:
             
             # カテゴリ別に集計
             if "category" in tags_df.columns:
-                category_results = results_df_expanded.groupby("category").agg({
-                    col: ["mean", "std"] 
-                    for col in results_df_expanded.columns 
-                    if "evaluator" in col or "judge" in col.lower()
-                })
-                print("\nカテゴリ別評価結果:")
-                display(category_results)
+                # 数値列のみを集計対象とする
+                numeric_cols = results_df_expanded.select_dtypes(include=['number']).columns
+                evaluator_cols = [col for col in numeric_cols if "evaluator" in col.lower() or "judge" in col.lower() or "score" in col.lower()]
+                
+                if len(evaluator_cols) > 0:
+                    category_results = results_df_expanded.groupby("category")[evaluator_cols].agg(["mean", "std"])
+                    print("\nカテゴリ別評価結果（数値列のみ）:")
+                    display(category_results)
+                else:
+                    # 文字列型の評価スコアがある場合、カウントを表示
+                    string_cols = [col for col in results_df_expanded.columns if "evaluator" in col.lower() or "judge" in col.lower()]
+                    if len(string_cols) > 0:
+                        print("\nカテゴリ別評価結果（文字列型スコアの分布）:")
+                        for col in string_cols:
+                            print(f"\n{col}の分布:")
+                            category_counts = results_df_expanded.groupby("category")[col].value_counts().unstack(fill_value=0)
+                            display(category_counts)
     else:
         print("tagsカラムが見つかりません。評価データセットにtagsが含まれているか確認してください。")
 except Exception as e:
     print(f"カテゴリ別集計でエラー: {e}")
+    import traceback
+    traceback.print_exc()
 
 # COMMAND ----------
 
@@ -354,31 +373,51 @@ except Exception as e:
 # COMMAND ----------
 
 try:
+    # 列名を確認
+    print("利用可能な列名:")
+    print(results_df.columns.tolist())
+    print("\n")
+    
     for idx, row in results_df.iterrows():
         print(f"\n=== 質問 {idx + 1} ===")
         
-        # 入力の取得
-        inputs = row.get('inputs', {})
-        if isinstance(inputs, dict):
-            question = inputs.get('question', 'N/A')
+        # 入力の取得（列名を確認して適切にアクセス）
+        if 'inputs' in results_df.columns:
+            inputs = row['inputs']
+            if isinstance(inputs, dict):
+                question = inputs.get('question', str(inputs))
+            else:
+                question = str(inputs)
+        elif 'question' in results_df.columns:
+            question = row['question']
         else:
-            question = str(inputs)
+            question = 'N/A'
         print(f"質問: {question}")
         
         # 出力の取得
-        outputs = row.get('outputs', {})
-        if isinstance(outputs, dict):
-            answer = outputs.get('answer', 'N/A')
-            if isinstance(answer, str) and len(answer) > 200:
-                answer = answer[:200] + "..."
+        if 'outputs' in results_df.columns:
+            outputs = row['outputs']
+            if isinstance(outputs, dict):
+                answer = outputs.get('answer', str(outputs))
+            else:
+                answer = str(outputs)
+        elif 'answer' in results_df.columns:
+            answer = row['answer']
         else:
-            answer = str(outputs)[:200] + "..." if len(str(outputs)) > 200 else str(outputs)
+            answer = 'N/A'
+        
+        if isinstance(answer, str) and len(answer) > 200:
+            answer = answer[:200] + "..."
         print(f"回答: {answer}")
         
-        # 評価スコアの取得
-        accuracy = row.get('accuracy_evaluator', 'N/A')
-        relevance = row.get('relevance_evaluator', 'N/A')
-        grounding = row.get('grounding_evaluator', 'N/A')
+        # 評価スコアの取得（列名を確認）
+        accuracy_cols = [col for col in results_df.columns if 'accuracy' in col.lower()]
+        relevance_cols = [col for col in results_df.columns if 'relevance' in col.lower()]
+        grounding_cols = [col for col in results_df.columns if 'grounding' in col.lower()]
+        
+        accuracy = row[accuracy_cols[0]] if accuracy_cols else 'N/A'
+        relevance = row[relevance_cols[0]] if relevance_cols else 'N/A'
+        grounding = row[grounding_cols[0]] if grounding_cols else 'N/A'
         
         # スコアが辞書の場合はvalueを取得
         if isinstance(accuracy, dict):
@@ -393,7 +432,9 @@ try:
         print(f"接地性: {grounding}")
 except Exception as e:
     print(f"個別結果の表示でエラー: {e}")
-    print("評価結果の構造を確認してください")
+    import traceback
+    traceback.print_exc()
+    print("\n評価結果の構造を確認してください")
 
 # COMMAND ----------
 
@@ -408,11 +449,24 @@ except Exception as e:
 EVAL_RESULTS_TABLE = f"{config.catalog}.{config.schema}.yona_commuting_allowance_eval_results"
 
 try:
-    eval_spark_df = spark.createDataFrame(results_df)
+    # 複合型（辞書、リストなど）を含む列を除外または文字列に変換
+    results_df_clean = results_df.copy()
+    
+    # 複合型の列を文字列に変換
+    for col in results_df_clean.columns:
+        if results_df_clean[col].dtype == 'object':
+            # 辞書やリストの場合は文字列に変換
+            results_df_clean[col] = results_df_clean[col].apply(
+                lambda x: str(x) if isinstance(x, (dict, list)) else x
+            )
+    
+    eval_spark_df = spark.createDataFrame(results_df_clean)
     eval_spark_df.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable(EVAL_RESULTS_TABLE)
     print(f"評価結果を {EVAL_RESULTS_TABLE} に保存しました")
 except Exception as e:
     print(f"テーブル保存エラー（スキップ）: {e}")
+    print("複合型を含む列があるため、Deltaテーブルへの保存をスキップしました。")
+    print("必要に応じて、結果をCSVやJSON形式で保存してください。")
 
 # COMMAND ----------
 
