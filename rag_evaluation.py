@@ -10,8 +10,6 @@
 # MAGIC 5. 評価結果の可視化と分析
 # MAGIC
 # MAGIC **目的**: RAGチェーンの品質を体系的に評価し、継続的な改善を行う
-# MAGIC
-# MAGIC 参考: [Databricks生成AIアプリ開発ワークフロー](https://docs.databricks.com/aws/ja/generative-ai/tutorials/ai-cookbook/genai-developer-workflow)
 
 # COMMAND ----------
 
@@ -20,7 +18,22 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install -r requirements.txt
+# MAGIC %pip install \
+# MAGIC   mlflow>=3.4.0 \
+# MAGIC   langchain==0.3.27 \
+# MAGIC   langchain-core==0.3.75 \
+# MAGIC   langchain-community \
+# MAGIC   langchain-huggingface==0.3.1 \
+# MAGIC   databricks-langchain==0.7.1 \
+# MAGIC   databricks-vectorsearch==0.57 \
+# MAGIC   databricks-sdk==0.65.0 \
+# MAGIC   sentence-transformers==5.1.0 \
+# MAGIC   transformers>=4.49.0,<4.51 \
+# MAGIC   tokenizers>=0.21.2,<0.22 \
+# MAGIC   sentencepiece>=0.2.0,<0.3 \
+# MAGIC   torch==2.4.1 \
+# MAGIC   numpy==1.26.4 \
+# MAGIC   pandas==2.2.3
 
 # COMMAND ----------
 
