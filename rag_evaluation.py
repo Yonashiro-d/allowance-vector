@@ -437,7 +437,3 @@ except Exception as e:
     print("必要に応じて、結果をCSVやJSON形式で保存してください。")
 
 # COMMAND ----------
-
-# MAGIC %md
-# MAGIC 参考: [Databricks生成AIアプリ開発ワークフロー - 評価と反復](https://docs.databricks.com/aws/ja/generative-ai/tutorials/ai-cookbook/genai-developer-workflow#2--評価と反復)
-
